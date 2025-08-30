@@ -21,6 +21,7 @@ load(":common_providers.bzl", "KernelBuildUnameInfo")
 load(":constants.bzl", "GKI_ARTIFACTS_AARCH64_OUTS")
 load(":hermetic_toolchain.bzl", "hermetic_toolchain")
 load(":utils.bzl", "utils")
+load("//build/kernel/kleaf:props_flags.bzl", "PropsBuildSettingInfo")
 
 def _gki_artifacts_impl(ctx):
     hermetic_tools = hermetic_toolchain.get(ctx)
@@ -124,6 +125,32 @@ def _gki_artifacts_impl(ctx):
             what = "{}: Internal error: not producing the expected list of outputs".format(ctx.label),
         )
 
+    os_version_value = ""
+    if ctx.attr.os_version_setting:
+        info = ctx.attr.os_version_setting[PropsBuildSettingInfo]
+        if info and info.value:
+            os_version_value = info.value
+
+    fingerprint_value = ""
+    if ctx.attr.fingerprint_setting:
+        info = ctx.attr.fingerprint_setting[PropsBuildSettingInfo]
+        if info and info.value:
+            fingerprint_value = info.value
+
+    spl_date_value = ""
+    if ctx.attr.spl_date_setting:
+        info = ctx.attr.spl_date_setting[PropsBuildSettingInfo]
+        if info and info.value:
+            spl_date_value = info.value
+
+    env_for_action = {}
+    if os_version_value:
+        env_for_action["OS_VERSION"] = os_version_value
+    if fingerprint_value:
+        env_for_action["FINGERPRINT"] = fingerprint_value
+    if spl_date_value:
+        env_for_action["SPL_DATE"] = spl_date_value
+
     ctx.actions.run_shell(
         command = command,
         inputs = inputs,
@@ -131,6 +158,7 @@ def _gki_artifacts_impl(ctx):
         tools = depset(tools, transitive = transitive_tools),
         mnemonic = "GkiArtifacts",
         progress_message = "Building GKI artifacts {}".format(ctx.label),
+        env = env_for_action,
     )
 
     return [
@@ -182,6 +210,18 @@ For example:
             allow_single_file = True,
             default = Label("//build/kernel:build_utils"),
             cfg = "exec",
+        ),
+        "os_version_setting": attr.label(
+            default = Label("//build/kernel/kleaf:os_version"),
+            cfg = "host",
+        ),
+        "fingerprint_setting": attr.label(
+            default = Label("//build/kernel/kleaf:fingerprint"),
+            cfg = "host",
+        ),
+        "spl_date_setting": attr.label(
+            default = Label("//build/kernel/kleaf:spl_date"),
+            cfg = "host",
         ),
         "_gcov": attr.label(default = "//build/kernel/kleaf:gcov"),
         "_testkey": attr.label(default = "//tools/mkbootimg:gki/testdata/testkey_rsa4096.pem", allow_single_file = True),
