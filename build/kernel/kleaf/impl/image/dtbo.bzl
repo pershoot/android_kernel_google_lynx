@@ -17,6 +17,8 @@
 load(":common_providers.bzl", "KernelBuildInfo", "KernelEnvAndOutputsInfo")
 load(":debug.bzl", "debug")
 load(":utils.bzl", "utils")
+load("//build/kernel/kleaf:partition_size_setting.bzl", "PartitionSizeInfo")
+load("//build/kernel/kleaf:props_flags.bzl", "PropsBuildSettingInfo")
 
 visibility("//build/kernel/kleaf/...")
 
@@ -33,10 +35,43 @@ def _dtbo_impl(ctx):
     command += """
              # make dtbo
                mkdtimg create {output} ${{MKDTIMG_FLAGS}} {srcs}
+
+	     # AVB footer (algo: NONE); add prop
+             _dtbo_props=()
+             if [ -n "${{FINGERPRINT:-}}" ]; then
+               _dtbo_props+=( "--prop" "com.android.build.dtbo.fingerprint:${{FINGERPRINT}}" )
+             fi
+
+             image_size=$(stat -c%s "{output}" 2>/dev/null || \
+                          stat -f%z "{output}" 2>/dev/null || \
+                          wc -c < "{output}" 2>/dev/null) || image_size=0
+             if [ "${{image_size}}" -gt 0 ]; then
+               min_size=$((image_size + 1024 * 1024))
+               dtbo_partition_size=$(( ( (min_size + 1024*1024 - 1) / (1024*1024) ) * 1024*1024 ))
+             else
+               dtbo_partition_size=$((8 * 1024 * 1024))
+             fi
+
+             avbtool add_hash_footer \
+               --image "{output}" \
+               --partition_name dtbo \
+               --partition_size "${{DTBO_PARTITION_SIZE:-${{dtbo_partition_size}}}}" \
+               --algorithm NONE \
+               "${{_dtbo_props[@]}}"
     """.format(
         output = output.path,
         srcs = " ".join([f.path for f in ctx.files.srcs]),
     )
+
+    env_for_action = {}
+    if ctx.attr.dtbo_partition_size_setting:
+        _sz = ctx.attr.dtbo_partition_size_setting[PartitionSizeInfo]
+        if _sz and _sz.value:
+            env_for_action["DTBO_PARTITION_SIZE"] = str(_sz.value)
+    if ctx.attr.fingerprint_setting:
+        _fp = ctx.attr.fingerprint_setting[PropsBuildSettingInfo]
+        if _fp and _fp.value:
+            env_for_action["FINGERPRINT"] = _fp.value
 
     debug.print_scripts(ctx, command)
     ctx.actions.run_shell(
@@ -46,6 +81,7 @@ def _dtbo_impl(ctx):
         tools = tools,
         progress_message = "Building dtbo {}".format(ctx.label),
         command = command,
+        env = env_for_action,
     )
     return DefaultInfo(files = depset([output]))
 
@@ -62,6 +98,14 @@ dtbo = rule(
         ),
         "_debug_print_scripts": attr.label(
             default = "//build/kernel/kleaf:debug_print_scripts",
+        ),
+        "dtbo_partition_size_setting": attr.label(
+            default = Label("//build/kernel/kleaf:dtbo_partition_size"),
+            cfg = "host",
+        ),
+        "fingerprint_setting": attr.label(
+            default = Label("//build/kernel/kleaf:fingerprint"),
+            cfg = "host",
         ),
     },
 )
