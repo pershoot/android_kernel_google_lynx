@@ -20,6 +20,8 @@ load("//build/kernel/kleaf/tests:empty_test.bzl", "empty_test")
 load("//build/kernel/kleaf/impl:ddk/gen_ddk_headers.bzl", "gen_ddk_headers")
 load(":constants.bzl", "LTO_VALUES")
 load(":print_flags.bzl", "print_flags")
+load("//build/kernel/kleaf:partition_size_setting.bzl", "define_partition_size_setting")
+load("//build/kernel/kleaf:props_flags.bzl", "define_props_flags")
 
 # Build flags
 
@@ -684,3 +686,6 @@ test_suite(
         "//prebuilts/build-tools/tests",
     ],
 )
+
+define_partition_size_setting()
+define_props_flags()

@@ -24,6 +24,7 @@ load(
 )
 load(":debug.bzl", "debug")
 load(":utils.bzl", "utils")
+load("//build/kernel/kleaf:props_flags.bzl", "PropsBuildSettingInfo")
 
 visibility("//build/kernel/kleaf/...")
 
@@ -201,6 +202,24 @@ file a bug.""")
         build_command = build_command,
     )
 
+    os_version_value = ""
+    if hasattr(ctx.attr, "os_version_setting") and ctx.attr.os_version_setting:
+        _info = ctx.attr.os_version_setting[PropsBuildSettingInfo]
+        if _info and _info.value:
+            os_version_value = _info.value
+
+    fingerprint_value = ""
+    if hasattr(ctx.attr, "fingerprint_setting") and ctx.attr.fingerprint_setting:
+        _info = ctx.attr.fingerprint_setting[PropsBuildSettingInfo]
+        if _info and _info.value:
+            fingerprint_value = _info.value
+
+    env_for_action = {}
+    if os_version_value:
+        env_for_action["OS_VERSION"] = os_version_value
+    if fingerprint_value:
+        env_for_action["FINGERPRINT"] = fingerprint_value
+
     debug.print_scripts(ctx, command)
     ctx.actions.run_shell(
         mnemonic = mnemonic,
@@ -209,6 +228,7 @@ file a bug.""")
         outputs = command_outputs,
         progress_message = "Building {} {}".format(what, ctx.label),
         command = command,
+        env = env_for_action,
     )
     return DefaultInfo(files = depset(outputs))
 
@@ -233,6 +253,14 @@ def _build_modules_image_attrs_common(additional = None):
             doc = """Whether to create and keep a modules.order file generated
                 by a postorder traversal of the `kernel_modules_install` sources.
                 It defaults to `True`.""",
+        ),
+        "os_version_setting": attr.label(
+            default = Label("//build/kernel/kleaf:os_version"),
+            cfg = "host",
+        ),
+        "fingerprint_setting": attr.label(
+            default = Label("//build/kernel/kleaf:fingerprint"),
+            cfg = "host",
         ),
     }
     if additional != None:

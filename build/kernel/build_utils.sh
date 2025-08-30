@@ -444,13 +444,18 @@ function build_system_dlkm() {
     rm ${system_dlkm_file_contexts}
   fi
 
+  _sdlkm_props=()
+  [[ -n "${OS_VERSION:-}"  ]] && _sdlkm_props+=( "--prop" "com.android.build.system_dlkm.os_version:${OS_VERSION}" )
+  [[ -n "${FINGERPRINT:-}" ]] && _sdlkm_props+=( "--prop" "com.android.build.system_dlkm.fingerprint:${FINGERPRINT}" )
+
   # No need to sign the image as modules are signed
   for image in "${generated_images[@]}"
   do
     avbtool add_hashtree_footer \
       --partition_name system_dlkm \
       --hash_algorithm sha256 \
-      --image "${DIST_DIR}/${image}"
+      --image "${DIST_DIR}/${image}" \
+      "${_sdlkm_props[@]}"
   done
 
   # Archive system_dlkm_staging_dir
@@ -544,12 +549,17 @@ function build_vendor_dlkm() {
   generated_images+=(${vendor_dlkm_flatten_image_name})
   fi
 
+  _vdlkm_props=()
+  [[ -n "${OS_VERSION:-}"  ]] && _vdlkm_props+=( "--prop" "com.android.build.vendor_dlkm.os_version:${OS_VERSION}" )
+  [[ -n "${FINGERPRINT:-}" ]] && _vdlkm_props+=( "--prop" "com.android.build.vendor_dlkm.fingerprint:${FINGERPRINT}" )
+
   for image in "${generated_images[@]}"
   do
     avbtool add_hashtree_footer \
       --partition_name vendor_dlkm \
       --hash_algorithm sha256 \
-      --image "${DIST_DIR}/${image}"
+      --image "${DIST_DIR}/${image}" \
+      "${_vdlkm_props[@]}"
   done
 
   if [ -n "${vendor_dlkm_archive}" ]; then
@@ -772,6 +782,40 @@ function build_boot_images() {
     fi
   fi
 
+  if [ -z "${SKIP_VENDOR_BOOT}" ] && [ -n "${VENDOR_BOOT_NAME}" ] && [ -f "${DIST_DIR}/${VENDOR_BOOT_NAME}" ]; then
+      vendor_image="${DIST_DIR}/${VENDOR_BOOT_NAME}"
+      vendor_part="${VENDOR_BOOT_NAME%%.*}"
+
+      vendor_footer_args=()
+      if [ "${vendor_part}" = "vendor_kernel_boot" ] && [ -n "${FINGERPRINT:-}" ]; then
+          vendor_footer_args+=( "--prop" "com.android.build.vendor_kernel_boot.fingerprint:${FINGERPRINT}" )
+      fi
+
+      # Vendor partition size from image file
+      image_size=$(stat -c%s "${vendor_image}" 2>/dev/null) || \
+      image_size=$(stat -f%z "${vendor_image}" 2>/dev/null) || \
+      image_size=$(wc -c < "${vendor_image}" 2>/dev/null) || image_size=0
+
+      # Add 1 MiB; round up
+      if [ "${image_size}" -gt 0 ]; then
+          min_size=$((image_size + 1024 * 1024))
+          vendor_partition_size=$(( ( (min_size + 1024*1024 - 1) / (1024*1024) ) * 1024*1024 ))
+      else
+          # Fall back (64 MiB).
+          vendor_partition_size=$((64 * 1024 * 1024))
+      fi
+
+      vendor_partition_size="${VENDOR_KERNEL_BOOT_PARTITION_SIZE:-${vendor_partition_size}}" # Override
+      if [ ${#vendor_footer_args[@]} -gt 0 ] || [ -n "${VENDOR_KERNEL_BOOT_PARTITION_SIZE:-}" ]; then
+          avbtool add_hash_footer \
+              --partition_name "${vendor_part}" \
+              --partition_size "${vendor_partition_size}" \
+              --image "${vendor_image}" \
+              --algorithm NONE \
+              "${vendor_footer_args[@]}"
+      fi
+  fi
+
   if [ -z "${SKIP_VENDOR_BOOT}" ] \
     && [ "${BOOT_IMAGE_HEADER_VERSION}" -ge "3" ] \
     && [ -f "${DIST_DIR}/${VENDOR_BOOT_NAME}" ]; then
@@ -814,15 +858,21 @@ function gki_get_boot_img_size() {
 
 # gki_add_avb_footer <image> <partition_size> <security_patch_level>
 function gki_add_avb_footer() {
-  local spl_date="$3"
-  local additional_props=""
+  local spl_date="${SPL_DATE:-$3}"
+  local additional_props=()
+  if [ -n "${OS_VERSION}" ]; then
+    additional_props+=( "--prop" "com.android.build.boot.os_version:${OS_VERSION}" )
+  fi
+  if [ -n "${FINGERPRINT}" ]; then
+    additional_props+=( "--prop" "com.android.build.boot.fingerprint:${FINGERPRINT}" )
+  fi
   if [ -n "${spl_date}" ]; then
-    additional_props="--prop com.android.build.boot.security_patch:${spl_date}"
+    additional_props+=( "--prop" "com.android.build.boot.security_patch:${spl_date}" )
   fi
 
   avbtool add_hash_footer --image "$1" \
     --partition_name boot --partition_size "$2" \
-    ${additional_props}
+    "${additional_props[@]}"
 }
 
 # gki_dry_run_certify_bootimg <boot_image> <gki_artifacts_info_file> <security_patch_level>
@@ -832,11 +882,24 @@ function gki_add_avb_footer() {
 # VTS to verify that a GKI boot.img is authentic.
 # Dry running the process here so we can catch related issues early.
 function gki_dry_run_certify_bootimg() {
-  local spl_date="$3"
-  local additional_props=()
+  local spl_date="${SPL_DATE:-$3}"
+  local footer_items=()
+  if [ -n "${OS_VERSION}" ]; then
+    footer_items+=( "--prop" "com.android.build.boot.os_version:${OS_VERSION}" )
+  fi
+  if [ -n "${FINGERPRINT}" ]; then
+    footer_items+=( "--prop" "com.android.build.boot.fingerprint:${FINGERPRINT}" )
+  fi
   if [ -n "${spl_date}" ]; then
-    additional_props+=("--extra_footer_args" \
-      "--prop com.android.build.boot.security_patch:${spl_date}")
+    footer_items+=( "--prop" "com.android.build.boot.security_patch:${spl_date}" )
+  fi
+
+  local additional_props=()
+  if [ ${#footer_items[@]} -gt 0 ]; then
+    local footer_str
+    footer_str="$(printf '%s ' "${footer_items[@]}")"
+    footer_str="${footer_str%" "}"
+    additional_props=( "--extra_footer_args" "${footer_str}" )
   fi
 
   certify_bootimg --boot_img "$1" \
@@ -924,7 +987,9 @@ function build_gki_boot_images() {
         # rollover to the next year
         spl_year="$((${spl_year} + 1))"
       fi
-      local spl_date=$(printf "%d-%02d-05\n" ${spl_year} ${spl_month})
+      local default_spl_date
+      default_spl_date=$(printf "%d-%02d-05" ${spl_year} ${spl_month})
+      local spl_date="${SPL_DATE:-$default_spl_date}"
 
       gki_add_avb_footer "${boot_image_path}" \
         "$(gki_get_boot_img_size "${compression}")" "${spl_date}"

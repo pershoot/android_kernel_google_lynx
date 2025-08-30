@@ -21,6 +21,8 @@ load(":debug.bzl", "debug")
 load(":image/image_utils.bzl", "image_utils")
 load(":image/initramfs.bzl", "InitramfsInfo")
 load(":utils.bzl", "utils")
+load("//build/kernel/kleaf:partition_size_setting.bzl", "PartitionSizeInfo")
+load("//build/kernel/kleaf:props_flags.bzl", "PropsBuildSettingInfo")
 
 visibility("//build/kernel/kleaf/...")
 
@@ -81,6 +83,18 @@ def _boot_images_impl(ctx):
         data = ctx.attr.kernel_build[KernelEnvAndOutputsInfo].data,
         restore_out_dir_cmd = utils.get_check_sandbox_cmd(),
     )
+
+    vendor_partition_size_value = 0
+    if ctx.attr.vendor_kernel_boot_partition_size_setting:
+        info = ctx.attr.vendor_kernel_boot_partition_size_setting[PartitionSizeInfo]
+        if info and info.value:
+            vendor_partition_size_value = int(info.value)
+
+    fingerprint_value = ""
+    if ctx.attr.fingerprint_setting:
+        info = ctx.attr.fingerprint_setting[PropsBuildSettingInfo]
+        if info and info.value:
+            fingerprint_value = info.value
 
     command += """
         MKBOOTIMG_PATH={mkbootimg}
@@ -214,6 +228,16 @@ def _boot_images_impl(ctx):
         ramdisk_ext = ramdisk_options.ramdisk_ext,
     )
 
+    env_for_action = {}
+    if ctx.attr.vendor_kernel_boot_partition_size_setting:
+        info = ctx.attr.vendor_kernel_boot_partition_size_setting[PartitionSizeInfo]
+        if info and info.value:
+            env_for_action["VENDOR_KERNEL_BOOT_PARTITION_SIZE"] = str(info.value)
+    elif vendor_partition_size_value:
+        env_for_action["VENDOR_KERNEL_BOOT_PARTITION_SIZE"] = str(vendor_partition_size_value)
+    if fingerprint_value:
+        env_for_action["FINGERPRINT"] = fingerprint_value
+
     debug.print_scripts(ctx, command)
     ctx.actions.run_shell(
         mnemonic = "BootImages",
@@ -222,6 +246,7 @@ def _boot_images_impl(ctx):
         tools = depset(tools, transitive = transitive_tools),
         progress_message = "Building boot images {}".format(ctx.label),
         command = command,
+        env = env_for_action,
     )
 
 boot_images = rule(
@@ -302,6 +327,14 @@ Execute `build_boot_images` in `build_utils.sh`.""",
             default = Label("//build/kernel/kleaf:search_and_cp_output"),
             cfg = "exec",
             executable = True,
+        ),
+        "vendor_kernel_boot_partition_size_setting": attr.label(
+            default = Label("//build/kernel/kleaf:vendor_kernel_boot_partition_size"),
+            cfg = "host",
+        ),
+        "fingerprint_setting": attr.label(
+            default = Label("//build/kernel/kleaf:fingerprint"),
+            cfg = "host",
         ),
     },
 )
