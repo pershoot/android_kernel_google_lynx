@@ -52,11 +52,16 @@ def _dtbo_impl(ctx):
                dtbo_partition_size=$((8 * 1024 * 1024))
              fi
 
+             if [[ -n "$AVB_KEY" ]]; then
+               _dtbo_sign_args=( --algorithm "$AVB_ALGORITHM" --key "$AVB_KEY" )
+             else
+               _dtbo_sign_args=( --algorithm NONE )
+             fi
              avbtool add_hash_footer \
                --image "{output}" \
                --partition_name dtbo \
                --partition_size "${{DTBO_PARTITION_SIZE:-${{dtbo_partition_size}}}}" \
-               --algorithm NONE \
+               "${{_dtbo_sign_args[@]}}" \
                "${{_dtbo_props[@]}}"
     """.format(
         output = output.path,
@@ -72,6 +77,9 @@ def _dtbo_impl(ctx):
         _fp = ctx.attr.fingerprint_setting[PropsBuildSettingInfo]
         if _fp and _fp.value:
             env_for_action["FINGERPRINT"] = _fp.value
+    if ctx.attr.avb_footer_key:
+        env_for_action["AVB_KEY"] = ctx.file.avb_footer_key.path
+        env_for_action["AVB_ALGORITHM"] = ctx.attr.avb_boot_algorithm
 
     debug.print_scripts(ctx, command)
     ctx.actions.run_shell(
@@ -106,6 +114,10 @@ dtbo = rule(
         "fingerprint_setting": attr.label(
             default = Label("//build/kernel/kleaf:fingerprint"),
             cfg = "host",
+        ),
+        "avb_footer_key": attr.label(
+            allow_single_file = True,
+            doc = "Private key for footer assembly (no key = algo NONE)",
         ),
     },
 )
