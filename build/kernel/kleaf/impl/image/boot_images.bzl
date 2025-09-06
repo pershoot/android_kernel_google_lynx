@@ -237,6 +237,9 @@ def _boot_images_impl(ctx):
         env_for_action["VENDOR_KERNEL_BOOT_PARTITION_SIZE"] = str(vendor_partition_size_value)
     if fingerprint_value:
         env_for_action["FINGERPRINT"] = fingerprint_value
+    if ctx.attr.avb_sign_boot_img:
+        env_for_action["AVB_KEY"] = ctx.file.avb_boot_key.path
+        env_for_action["AVB_ALGORITHM"] = ctx.attr.avb_boot_algorithm
 
     debug.print_scripts(ctx, command)
     ctx.actions.run_shell(
