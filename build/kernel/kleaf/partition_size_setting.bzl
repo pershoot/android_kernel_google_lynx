@@ -6,22 +6,28 @@ PartitionSizeInfo = provider(fields = {
 def _impl(ctx):
     return [PartitionSizeInfo(value = ctx.build_setting_value)]
 
-partition_size_setting = rule(
+_partition_size_setting_rule = rule(
     implementation = _impl,
     build_setting = config.int(flag = True),
     doc = "Build setting for partition size in bytes (integer).",
 )
 
 # Expose in kleaf/BUILD.bazel
-def define_partition_size_setting():
-    partition_size_setting(
+def define_partition_size_setting(visibility = ["//visibility:public"]):
+    _partition_size_setting_rule(
         name = "vendor_kernel_boot_partition_size",
         build_setting_default = 0,
-        visibility = ["//visibility:public"],
+        visibility = visibility,
     )
 
-    partition_size_setting(
+    _partition_size_setting_rule(
         name = "dtbo_partition_size",
         build_setting_default = 0,
-        visibility = ["//visibility:public"],
+        visibility = visibility,
+    )
+
+    _partition_size_setting_rule(
+        name = "boot_partition_size",
+        build_setting_default = 0,
+        visibility = visibility,
     )

@@ -35,3 +35,15 @@ new_local_repository(
     build_file = "private/devices/google/common/workspace/bionic.BUILD.bazel",
     path = "external/bionic",
 )
+
+new_local_repository(
+    name = "avb_key_repo",
+    build_file_content = """
+alias(
+    name = "avb_key_rsa4096.pem",
+    actual = "testkey_rsa4096.pem",
+    visibility = ["//visibility:public"],
+)
+""",
+    path = "tools/mkbootimg/gki/testdata",
+)

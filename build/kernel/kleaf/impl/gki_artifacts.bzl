@@ -21,6 +21,7 @@ load(":common_providers.bzl", "KernelBuildUnameInfo")
 load(":constants.bzl", "GKI_ARTIFACTS_AARCH64_OUTS")
 load(":hermetic_toolchain.bzl", "hermetic_toolchain")
 load(":utils.bzl", "utils")
+load("//build/kernel/kleaf:partition_size_setting.bzl", "PartitionSizeInfo")
 load("//build/kernel/kleaf:props_flags.bzl", "PropsBuildSettingInfo")
 
 def _gki_artifacts_impl(ctx):
@@ -90,6 +91,54 @@ def _gki_artifacts_impl(ctx):
     dist_dir = outs[0].dirname
     out_dir = paths.join(utils.intermediates_dir(ctx), "out_dir")
 
+    # AVB inject (label-mode preferred; string path fallback)
+    avb_env_cmd = ""
+    use_label = ctx.attr._avb_key_use_label[BuildSettingInfo].value
+    key = ctx.attr._avb_boot_key[BuildSettingInfo].value
+    boot_partition_size_value = 0
+    if ctx.attr.boot_partition_size_setting:
+        _ps = ctx.attr.boot_partition_size_setting[PartitionSizeInfo]
+        if _ps and _ps.value:
+            boot_partition_size_value = int(_ps.value)
+    if ctx.attr._avb_boot_partition_size:
+        _bs = ctx.attr._avb_boot_partition_size[BuildSettingInfo]
+        if _bs and _bs.value:
+            boot_partition_size_value = int(_bs.value)
+    if use_label:
+        # Declared file as input (made available in the sandbox)
+        key_path = ctx.file._avb_boot_key_file.path
+        algo = ctx.attr._avb_boot_algorithm[BuildSettingInfo].value or "SHA256_RSA4096"
+        pname = ctx.attr._avb_boot_partition_name[BuildSettingInfo].value or "boot"
+        avb_env_cmd = """
+export AVB_BOOT_KEY={key}
+export AVB_BOOT_ALGORITHM={algo}
+export AVB_BOOT_PARTITION_NAME={pname}
+""".format(
+            key = shell.quote(key_path),
+            algo = shell.quote(algo),
+            pname = shell.quote(pname),
+        )
+        if boot_partition_size_value:
+            avb_env_cmd += "export AVB_BOOT_PARTITION_SIZE={psize}\n".format(
+                psize = shell.quote(str(boot_partition_size_value)),
+            )
+    elif key:
+        algo = ctx.attr._avb_boot_algorithm[BuildSettingInfo].value or "SHA256_RSA4096"
+        pname = ctx.attr._avb_boot_partition_name[BuildSettingInfo].value or "boot"
+        avb_env_cmd = """
+export AVB_BOOT_KEY={key}
+export AVB_BOOT_ALGORITHM={algo}
+export AVB_BOOT_PARTITION_NAME={pname}
+""".format(
+            key = shell.quote(key),
+            algo = shell.quote(algo),
+            pname = shell.quote(pname),
+        )
+        if boot_partition_size_value:
+            avb_env_cmd += "export AVB_BOOT_PARTITION_SIZE={psize}\n".format(
+                psize = shell.quote(str(boot_partition_size_value)),
+            )
+
     command = hermetic_tools.setup + """
         source {build_utils_sh}
         cp -pl -t {dist_dir} {images}
@@ -102,8 +151,73 @@ def _gki_artifacts_impl(ctx):
         export MKBOOTIMG_PATH={mkbootimg}
         export KLEAF_INTERNAL_GKI_BOOT_IMG_CERTIFICATION_KEY={testkey}
         {size_cmd}
+        {avb_env_cmd}
         {skip_avb_cmd}
         build_gki_artifacts
+        # Finalize AVB signing (last write is signed footer)
+        if [ -n "${{AVB_BOOT_KEY:-}}" ]; then
+          sign_one() {{
+            local img="$1"
+            [ -f "$img" ] || return 0
+            # Boot only for the interim; ignore overrides
+            local pname="boot"
+            if [ -n "${{AVB_BOOT_PARTITION_NAME:-}}" ] && [ "${{AVB_BOOT_PARTITION_NAME}}" != "boot" ]; then
+              echo "Note: Overrides for AVB_BOOT_PARTITION_NAME=${{AVB_BOOT_PARTITION_NAME}} is unsupported; using boot"
+            fi
+            local algo="${{AVB_BOOT_ALGORITHM:-SHA256_RSA4096}}"
+            local psize="${{AVB_BOOT_PARTITION_SIZE:-}}"
+
+            # Footer props assemble
+            local props=()
+            if [ -n "${{OS_VERSION:-}}" ]; then
+              props+=( "--prop" "com.android.build.boot.os_version:${{OS_VERSION}}" )
+            fi
+            if [ -n "${{FINGERPRINT:-}}" ]; then
+              props+=( "--prop" "com.android.build.boot.fingerprint:${{FINGERPRINT}}" )
+            fi
+            if [ -n "${{SPL_DATE:-}}" ]; then
+              props+=( "--prop" "com.android.build.boot.security_patch:${{SPL_DATE}}" )
+            fi
+
+            # Partition_size (calculated if not overrided)
+            if [ -z "$psize" ]; then
+              local size0
+              size0=$(stat -c%s "$img" 2>/dev/null || stat -f%z "$img" 2>/dev/null || wc -c < "$img" 2>/dev/null) || size0=0
+              local lo=$size0
+              local hi=$(( size0 + 65536 ))
+              avb_calc() {{
+                avbtool add_hash_footer --image "$img" \
+                  --partition_name "$pname" \
+                  --partition_size "$1" \
+                  --algorithm "$algo" \
+                  --do_not_append_vbmeta_image --calc_max_image_size 2>/dev/null || echo 0
+              }}
+              local fit
+              fit=$(avb_calc "$hi")
+              while [ "${{fit:-0}}" -lt "$size0" ]; do hi=$((hi*2)); fit=$(avb_calc "$hi"); done
+              while [ $lo -lt $hi ]; do
+                local mid=$(((lo+hi)/2))
+                fit=$(avb_calc "$mid")
+                if [ "${{fit:-0}}" -ge "$size0" ]; then hi=$mid; else lo=$((mid+1)); fi
+              done
+              psize=$lo
+            fi
+
+            # Replace footer; sign.
+            avbtool erase_footer --image "$img" >/dev/null 2>&1 || true
+            avbtool add_hash_footer \
+              --image "$img" \
+              --partition_name "$pname" \
+              --partition_size "$psize" \
+              --algorithm "$algo" \
+              --key "${{AVB_BOOT_KEY}}" \
+              ${{AVB_BOOT_ROLLBACK_INDEX:+--rollback_index $AVB_BOOT_ROLLBACK_INDEX}} \
+              "${{props[@]}}"
+          }}
+          sign_one "${{DIST_DIR}}/boot.img"
+          sign_one "${{DIST_DIR}}/boot-gz.img"
+          sign_one "${{DIST_DIR}}/boot-lz4.img"
+        fi
     """.format(
         build_utils_sh = ctx.file._build_utils_sh.path,
         dist_dir = dist_dir,
@@ -115,6 +229,7 @@ def _gki_artifacts_impl(ctx):
         mkbootimg = ctx.file.mkbootimg.path,
         testkey = ctx.file._testkey.path,
         size_cmd = size_cmd,
+        avb_env_cmd = avb_env_cmd,
         skip_avb_cmd = skip_avb_cmd,
     )
 
@@ -150,6 +265,30 @@ def _gki_artifacts_impl(ctx):
         env_for_action["FINGERPRINT"] = fingerprint_value
     if spl_date_value:
         env_for_action["SPL_DATE"] = spl_date_value
+    rb_idx = ctx.attr._avb_boot_rollback_index[BuildSettingInfo].value
+    if rb_idx and rb_idx != "0":
+        env_for_action["AVB_BOOT_ROLLBACK_INDEX"] = rb_idx
+    # AVB label-mode / env connections
+    # Preferred label-mode; string path fallback
+    use_label = ctx.attr._avb_key_use_label[BuildSettingInfo].value
+    avb_key_str = ctx.attr._avb_boot_key[BuildSettingInfo].value
+    if use_label:
+        # Key file availablity in to the sandbox; export it
+        inputs = inputs + [ctx.file._avb_boot_key_file]
+        env_for_action["AVB_BOOT_KEY"] = ctx.file._avb_boot_key_file.path
+    elif avb_key_str:
+        env_for_action["AVB_BOOT_KEY"] = avb_key_str
+
+    # Pass through if key
+    if "AVB_BOOT_KEY" in env_for_action:
+        env_for_action["AVB_BOOT_ALGORITHM"] = (
+            ctx.attr._avb_boot_algorithm[BuildSettingInfo].value or "SHA256_RSA4096"
+        )
+        env_for_action["AVB_BOOT_PARTITION_NAME"] = (
+            ctx.attr._avb_boot_partition_name[BuildSettingInfo].value or "boot"
+        )
+        if boot_partition_size_value:
+            env_for_action["AVB_BOOT_PARTITION_SIZE"] = str(boot_partition_size_value)
 
     ctx.actions.run_shell(
         command = command,
@@ -222,6 +361,28 @@ For example:
         "spl_date_setting": attr.label(
             default = Label("//build/kernel/kleaf:spl_date"),
             cfg = "host",
+        ),
+	"boot_partition_size_setting": attr.label(
+            default = Label("//build/kernel/kleaf:boot_partition_size"),
+            cfg = "host",
+        ),
+        "_avb_boot_partition_size": attr.label(
+            default = Label("//build/kernel/kleaf:avb_boot_partition_size"),
+            cfg = "host",
+        ),
+        "_avb_boot_rollback_index": attr.label(
+            default = Label("//build/kernel/kleaf:avb_boot_rollback_index"),
+            cfg = "host",
+        ),
+        "_avb_key_use_label": attr.label(default = "//build/kernel/kleaf:avb_key_use_label"),
+        "_avb_boot_key": attr.label(default = "//build/kernel/kleaf:avb_boot_key"),
+        "_avb_boot_algorithm": attr.label(default = "//build/kernel/kleaf:avb_boot_algorithm"),
+        "_avb_boot_partition_name": attr.label(default = "//build/kernel/kleaf:avb_boot_partition_name"),
+        # This input: avb_key_use_label=true
+        # Default: --override_repository=avb_key_repo=/ABS-PATH/TO/KEY (export in BUILD.bazel over there)
+        "_avb_boot_key_file": attr.label(
+            default = Label("@avb_key_repo//:avb_key_rsa4096.pem"),
+            allow_single_file = True,
         ),
         "_gcov": attr.label(default = "//build/kernel/kleaf:gcov"),
         "_testkey": attr.label(default = "//tools/mkbootimg:gki/testdata/testkey_rsa4096.pem", allow_single_file = True),

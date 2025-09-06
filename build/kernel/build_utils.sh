@@ -455,7 +455,8 @@ function build_system_dlkm() {
       --partition_name system_dlkm \
       --hash_algorithm sha256 \
       --image "${DIST_DIR}/${image}" \
-      "${_sdlkm_props[@]}"
+      "${_sdlkm_props[@]}" \
+      ${AVB_KEY:+--algorithm ${AVB_ALGORITHM:-SHA256_RSA4096} --key ${AVB_KEY}}
   done
 
   # Archive system_dlkm_staging_dir
@@ -559,7 +560,8 @@ function build_vendor_dlkm() {
       --partition_name vendor_dlkm \
       --hash_algorithm sha256 \
       --image "${DIST_DIR}/${image}" \
-      "${_vdlkm_props[@]}"
+      "${_vdlkm_props[@]}" \
+      ${AVB_KEY:+--algorithm ${AVB_ALGORITHM:-SHA256_RSA4096} --key ${AVB_KEY}}
   done
 
   if [ -n "${vendor_dlkm_archive}" ]; then
@@ -807,11 +809,16 @@ function build_boot_images() {
 
       vendor_partition_size="${VENDOR_KERNEL_BOOT_PARTITION_SIZE:-${vendor_partition_size}}" # Override
       if [ ${#vendor_footer_args[@]} -gt 0 ] || [ -n "${VENDOR_KERNEL_BOOT_PARTITION_SIZE:-}" ]; then
+          if [[ -n "${AVB_KEY:-}" ]]; then
+            _vkb_sign_args=( --algorithm "${AVB_ALGORITHM:-SHA256_RSA4096}" --key "${AVB_KEY}" )
+          else
+            _vkb_sign_args=( --algorithm NONE )
+          fi
           avbtool add_hash_footer \
               --partition_name "${vendor_part}" \
               --partition_size "${vendor_partition_size}" \
               --image "${vendor_image}" \
-              --algorithm NONE \
+              "${_vkb_sign_args[@]}" \
               "${vendor_footer_args[@]}"
       fi
   fi
@@ -870,9 +877,34 @@ function gki_add_avb_footer() {
     additional_props+=( "--prop" "com.android.build.boot.security_patch:${spl_date}" )
   fi
 
-  avbtool add_hash_footer --image "$1" \
-    --partition_name boot --partition_size "$2" \
+  # Boot only for the interim; ignore overrides
+  local part_name="boot"
+  if [[ -n "${AVB_BOOT_PARTITION_NAME:-}" && "${AVB_BOOT_PARTITION_NAME}" != "boot" ]]; then
+    echo "Note: Overrides for AVB_BOOT_PARTITION_NAME=${AVB_BOOT_PARTITION_NAME} is unsupported; using boot"
+  fi
+  local part_size="${AVB_BOOT_PARTITION_SIZE:-$2}"
+  local algo="${AVB_BOOT_ALGORITHM:-SHA256_RSA4096}"
+  local img_base
+  img_base="$(basename "$1")"
+
+  local args=( add_hash_footer
+    --image "$1"
+    --partition_name "${part_name}"
+    --partition_size "${part_size}"
     "${additional_props[@]}"
+  )
+
+  if [[ -n "${AVB_BOOT_ROLLBACK_INDEX:-}" && "${AVB_BOOT_ROLLBACK_INDEX}" != "0" ]]; then
+    args+=( --rollback_index "${AVB_BOOT_ROLLBACK_INDEX}" )
+  fi
+
+  if [[ -n "${AVB_BOOT_KEY:-}" ]]; then
+    args+=( --algorithm "${algo}" --key "${AVB_BOOT_KEY}" )
+    echo "Signing GKI boot image file=${img_base} (part=${part_name}, size=${part_size}, algo=${algo})"
+  else
+    echo "GKI boot image: AVB footer has no sig for ${img_base} (AVB_BOOT_KEY missing)"
+  fi
+  avbtool "${args[@]}"
 }
 
 # gki_dry_run_certify_bootimg <boot_image> <gki_artifacts_info_file> <security_patch_level>
@@ -895,10 +927,16 @@ function gki_dry_run_certify_bootimg() {
   fi
 
   local additional_props=()
+  local footer_str=""
   if [ ${#footer_items[@]} -gt 0 ]; then
-    local footer_str
     footer_str="$(printf '%s ' "${footer_items[@]}")"
-    footer_str="${footer_str%" "}"
+  fi
+  # Rollback index (only if non-"0")
+  if [[ -n "${AVB_BOOT_ROLLBACK_INDEX:-}" && "${AVB_BOOT_ROLLBACK_INDEX}" != "0" ]]; then
+    footer_str+=" --rollback_index ${AVB_BOOT_ROLLBACK_INDEX}"
+  fi
+  footer_str="${footer_str%" "}"
+  if [ -n "${footer_str}" ]; then
     additional_props=( "--extra_footer_args" "${footer_str}" )
   fi
 
