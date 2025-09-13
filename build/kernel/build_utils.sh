@@ -453,6 +453,7 @@ function build_system_dlkm() {
   do
     avbtool add_hashtree_footer \
       --partition_name system_dlkm \
+      --partition_size ${SYSTEM_DLKM_PARTITION_SIZE:-0} \
       --hash_algorithm sha256 \
       --image "${DIST_DIR}/${image}" \
       "${_sdlkm_props[@]}" \
@@ -558,6 +559,7 @@ function build_vendor_dlkm() {
   do
     avbtool add_hashtree_footer \
       --partition_name vendor_dlkm \
+      --partition_size ${VENDOR_DLKM_PARTITION_SIZE:-0} \
       --hash_algorithm sha256 \
       --image "${DIST_DIR}/${image}" \
       "${_vdlkm_props[@]}" \
