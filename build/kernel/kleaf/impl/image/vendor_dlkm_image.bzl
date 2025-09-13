@@ -24,6 +24,7 @@ load(
     "VENDOR_DLKM_STAGING_ARCHIVE_NAME",
     "image_utils",
 )
+load("//build/kernel/kleaf:partition_size_setting.bzl", "PartitionSizeInfo")
 
 visibility("//build/kernel/kleaf/...")
 
@@ -35,6 +36,12 @@ def _vendor_dlkm_image_impl(ctx):
     vendor_dlkm_staging_dir = modules_staging_dir + "/vendor_dlkm_staging"
     vendor_dlkm_fs_type = ctx.attr.vendor_dlkm_fs_type
     vendor_dlkm_etc_files = " ".join([f.path for f in ctx.files.vendor_dlkm_etc_files])
+
+    vendor_dlkm_partition_size_value = ctx.attr.vendor_dlkm_partition_size
+    if ctx.attr.vendor_dlkm_partition_size_setting:
+        _ps = ctx.attr.vendor_dlkm_partition_size_setting[PartitionSizeInfo]
+        if _ps and _ps.value:
+            vendor_dlkm_partition_size_value = _ps.value
 
     vendor_dlkm_staging_archive = None
     if ctx.attr.vendor_dlkm_archive:
@@ -86,6 +93,7 @@ def _vendor_dlkm_image_impl(ctx):
                 VENDOR_DLKM_FS_TYPE={vendor_dlkm_fs_type}
                 VENDOR_DLKM_STAGING_DIR={vendor_dlkm_staging_dir}
                 VENDOR_DLKM_GEN_FLATTEN_IMAGE={build_flatten_image}
+                VENDOR_DLKM_PARTITION_SIZE={vendor_dlkm_partition_size_value}
                 build_vendor_dlkm {vendor_dlkm_archive}
               )
             # Move output files into place
@@ -120,6 +128,7 @@ def _vendor_dlkm_image_impl(ctx):
         vendor_dlkm_modules_blocklist = vendor_dlkm_modules_blocklist.path,
         vendor_dlkm_archive = "1" if ctx.attr.vendor_dlkm_archive else "",
         vendor_dlkm_staging_archive = vendor_dlkm_staging_archive.path if ctx.attr.vendor_dlkm_archive else None,
+        vendor_dlkm_partition_size_value = str(vendor_dlkm_partition_size_value),
     )
 
     additional_inputs += ctx.files.vendor_dlkm_etc_files
@@ -219,5 +228,13 @@ Modules listed in this file is stripped away from the `vendor_dlkm` image.""",
         "dedup_dlkm_modules": attr.bool(doc = "Whether to exclude `system_dlkm` modules"),
         "system_dlkm_image": attr.label(),
         "base_kernel_images": attr.label(allow_files = True),
+        "vendor_dlkm_partition_size": attr.int(
+            doc = "Partition size for vendor_dlkm (bytes)",
+            default = 0,
+        ),
+        "vendor_dlkm_partition_size_setting": attr.label(
+            default = Label("//build/kernel/kleaf:vendor_dlkm_partition_size"),
+            cfg = "host",
+        ),
     }),
 )

@@ -31,3 +31,15 @@ def define_partition_size_setting(visibility = ["//visibility:public"]):
         build_setting_default = 0,
         visibility = visibility,
     )
+
+    _partition_size_setting_rule(
+        name = "system_dlkm_partition_size",
+        build_setting_default = 0,
+        visibility = visibility,
+    )
+
+    _partition_size_setting_rule(
+        name = "vendor_dlkm_partition_size",
+        build_setting_default = 0,
+        visibility = visibility,
+    )
