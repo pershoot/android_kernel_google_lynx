@@ -27,6 +27,7 @@ load(
     _MODULES_LOAD_NAME = "SYSTEM_DLKM_MODULES_LOAD_NAME",
     _STAGING_ARCHIVE_NAME = "SYSTEM_DLKM_STAGING_ARCHIVE_NAME",
 )
+load("//build/kernel/kleaf:partition_size_setting.bzl", "PartitionSizeInfo")
 
 visibility("//build/kernel/kleaf/...")
 
@@ -56,6 +57,12 @@ def _system_dlkm_image_impl(ctx):
     restore_modules_install = True
     extract_staging_archive_cmd = ""
     extra_flags_cmd = ""
+
+    system_dlkm_partition_size_value = ctx.attr.system_dlkm_partition_size
+    if ctx.attr.system_dlkm_partition_size_setting:
+        _ps = ctx.attr.system_dlkm_partition_size_setting[PartitionSizeInfo]
+        if _ps and _ps.value:
+            system_dlkm_partition_size_value = _ps.value
 
     kernel_build_infos = ctx.attr.kernel_modules_install[KernelModuleInfo].kernel_build_infos
     if kernel_build_infos.images_info.base_kernel_label != None:
@@ -141,6 +148,7 @@ def _system_dlkm_image_impl(ctx):
                      SYSTEM_DLKM_STAGING_DIR={system_dlkm_staging_dir}
                      SYSTEM_DLKM_IMAGE_NAME={system_dlkm_img_name}
                      SYSTEM_DLKM_GEN_FLATTEN_IMAGE={build_flatten_image}
+                     SYSTEM_DLKM_PARTITION_SIZE={system_dlkm_partition_size}
                      {extra_flags_cmd}
                      build_system_dlkm
                    )
@@ -176,6 +184,7 @@ def _system_dlkm_image_impl(ctx):
             system_dlkm_modules_load = system_dlkm_modules_load.path,
             system_dlkm_staging_archive = system_dlkm_staging_archive.path,
             system_dlkm_modules_blocklist = system_dlkm_modules_blocklist.path,
+            system_dlkm_partition_size = str(system_dlkm_partition_size_value),
         )
 
     default_info = image_utils.build_modules_image_impl_common(
@@ -225,5 +234,13 @@ When included in a `copy_to_dist_dir` rule, this rule copies the following to `D
         "system_dlkm_modules_list": attr.label(allow_single_file = True),
         "system_dlkm_modules_blocklist": attr.label(allow_single_file = True),
         "system_dlkm_props": attr.label(allow_single_file = True),
+        "system_dlkm_partition_size": attr.int(
+            doc = "Partition size for system_dlkm (bytes)",
+            default = 0,
+        ),
+        "system_dlkm_partition_size_setting": attr.label(
+            default = Label("//build/kernel/kleaf:system_dlkm_partition_size"),
+            cfg = "host",
+        ),
     }),
 )
