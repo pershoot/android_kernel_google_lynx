@@ -615,13 +615,23 @@ def _kernel_config_impl(ctx):
             )
             post_setup_deps.append(file)
 
+    # localversion (//build/kernel/kleaf:stable_vermagic)
+    _sv = ctx.attr.stable_vermagic[BuildSettingInfo].value if hasattr(ctx.attr, "stable_vermagic") else ""
+    if not _sv:
+        localversion_stage_cmd = "rsync -aL --chmod=F+w {} ${{OUT_DIR}}/localversion".format(localversion_file.path)
+    elif _sv == "_STRIP_":
+        localversion_stage_cmd = "sed -E 's/-g[0-9a-f]+(-dirty)?$//' {} > ${{OUT_DIR}}/localversion".format(localversion_file.path)
+    else:
+        _suffix = _sv if _sv.startswith("-") else "-" + _sv
+        localversion_stage_cmd = "base=$(sed -E 's/-g[0-9a-f]+(-dirty)?$//' {}); echo \"${{base}}{}\" > ${{OUT_DIR}}/localversion".format(localversion_file.path, _suffix)
+
     post_setup = """
            [ -z ${{OUT_DIR}} ] && echo "FATAL: configs post_env_info setup run without OUT_DIR set!" >&2 && exit 1
          # Restore kernel config inputs
            mkdir -p ${{OUT_DIR}}/include/
            rsync -aL {out_dir}/.config ${{OUT_DIR}}/.config
            rsync -aL --chmod=D+w {out_dir}/include/ ${{OUT_DIR}}/include/
-           rsync -aL --chmod=F+w {localversion_file} ${{OUT_DIR}}/localversion
+           {localversion_stage_cmd}
 
          # Restore real value of $ROOT_DIR in auto.conf.cmd
            sed -i'' -e 's:${{ROOT_DIR}}:'"${{ROOT_DIR}}"':g' ${{OUT_DIR}}/include/config/auto.conf.cmd
@@ -629,7 +639,7 @@ def _kernel_config_impl(ctx):
            {extra_restore_outputs_cmd}
     """.format(
         out_dir = out_dir.path,
-        localversion_file = localversion_file.path,
+        localversion_stage_cmd = localversion_stage_cmd,
         extra_restore_outputs_cmd = extra_restore_outputs_cmd,
     )
 

@@ -91,6 +91,7 @@ def _kernel_config_config_settings_raw():
     return dicts.add(
         kgdb.config_settings_raw(),
         {
+            "stable_vermagic": "//build/kernel/kleaf:stable_vermagic",
             "kasan": "//build/kernel/kleaf:kasan",
             "kasan_sw_tags": "//build/kernel/kleaf:kasan_sw_tags",
             "kcsan": "//build/kernel/kleaf:kcsan",
