@@ -422,6 +422,12 @@ label_flag(
     visibility = ["//visibility:public"],
 )
 
+filegroup(
+    name = "common_overrides_config",
+    srcs = ["common_overrides.config"],
+    visibility = ["//build/kernel/kleaf:__subpackages__"],
+)
+
 # If true, enable CONFIG_GDB_SCRIPTS and collect gdb scripts.
 # If additional hacks are needed, put `select()` on the build_config.
 # See kleaf/docs/kgdb.md for details.
