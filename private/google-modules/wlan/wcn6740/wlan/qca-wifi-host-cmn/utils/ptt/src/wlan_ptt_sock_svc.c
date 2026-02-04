@@ -152,7 +152,7 @@ int ptt_sock_send_msg_to_app(tAniHdr *wmsg, int radio, int src_mod, int pid)
 	}
 	wnl = (tAniNlHdr *) nlh;
 	wnl->radio = radio;
-	memcpy(&wnl->wmsg, wmsg, wmsg_length);
+	memcpy(&wnl->wmsg, wmsg, min_t(size_t, wmsg_length, sizeof(wnl->wmsg)));
 #ifdef PTT_SOCK_DEBUG_VERBOSE
 	ptt_sock_dump_buf((const unsigned char *)skb->data, skb->len);
 #endif
