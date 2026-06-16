@@ -56,8 +56,8 @@
 #include <linux/delay.h>
 #include <linux/version_compat_defs.h>
 
-static char release_fw_name[] = "mali_csffw-r51p0.bin";
-static char default_fw_name[] = "mali_csffw.bin";
+static char release_fw_name[] = "mali_csffw-r54p3.bin";
+static char default_fw_name[] = "mali_csffw-r54p3.bin";
 module_param_string(fw_name, release_fw_name, sizeof(release_fw_name), 0644);
 MODULE_PARM_DESC(fw_name, "firmware image");
 
