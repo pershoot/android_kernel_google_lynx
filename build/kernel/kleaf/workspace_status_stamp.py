@@ -159,6 +159,9 @@ def list_projects() -> list[pathlib.Path]:
         with open(os.environ["KLEAF_REPO_MANIFEST"]) as repo_prop_file:
             return parse_repo_manifest(repo_prop_file.read())
 
+    if not pathlib.Path(".repo").is_dir():
+        return [pathlib.Path(".")]
+
     try:
         output = subprocess.check_output(["repo", "list", "-f"], text=True)
         return parse_repo_list(output)
