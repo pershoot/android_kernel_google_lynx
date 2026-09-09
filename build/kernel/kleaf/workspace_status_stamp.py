@@ -164,7 +164,7 @@ def list_projects() -> list[pathlib.Path]:
         return parse_repo_list(output)
     except (subprocess.SubprocessError, FileNotFoundError) as e:
         logging.warning("Unable to execute repo list -f: %s", e)
-        return []
+        return [pathlib.Path(".")]
 
 
 def parse_repo_manifest(manifest: str) -> list[pathlib.Path]:
@@ -310,7 +310,7 @@ class Stamp(object):
         return scmversion_map
 
     def get_localversion(self, project: pathlib.Path) -> PathCollectible | None:
-        if not self.use_kleaf_localversion:
+        if not self.use_kleaf_localversion and self.setlocalversion:
             return get_localversion_from_script(self.setlocalversion, project)
 
         return get_localversion_from_git(project)
