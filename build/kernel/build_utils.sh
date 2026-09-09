@@ -1120,7 +1120,7 @@ function extract_git_metadata() {
   local map=$1
   local git_project_candidate=$2
   local what=$3
-  while [[ "${git_project_candidate}" != "." ]]; do
+  while true; do
     value_candidate=$(python3 -c '
 import sys, json
 js = json.load(sys.stdin)
@@ -1129,6 +1129,9 @@ if key in js:
     print(js[key])
 ' "${git_project_candidate}" <<< "${map}")
     if [[ -n "${value_candidate}" ]]; then
+        break
+    fi
+    if [[ "${git_project_candidate}" == "." ]]; then
         break
     fi
     git_project_candidate=$(dirname ${git_project_candidate})
