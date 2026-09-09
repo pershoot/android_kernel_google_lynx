@@ -2,3 +2,6 @@ prebuilts/
 common/*.tar*
 common/ack/
 common/gki/
+bazel-*
+out/
+device.bazelrc
