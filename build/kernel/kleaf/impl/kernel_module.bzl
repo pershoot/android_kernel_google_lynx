@@ -448,7 +448,7 @@ def _kernel_module_impl(ctx):
 
     command += """
              # Set variables
-               ext_mod_rel=$(realpath ${{ROOT_DIR}}/{ext_mod} --relative-to ${{KERNEL_DIR}})
+               ext_mod_rel=$(realpath -m ${{ROOT_DIR}}/{ext_mod} --relative-to ${{KERNEL_DIR}})
 
              # Actual kernel module build
                make -C {ext_mod} ${{TOOL_ARGS}} M=${{ext_mod_rel}} O=${{OUT_DIR}} KERNEL_SRC=${{ROOT_DIR}}/${{KERNEL_DIR}} {make_filter} {make_redirect}
@@ -606,7 +606,7 @@ def _kernel_module_impl(ctx):
                # realpath requires the existence of ${{ROOT_DIR}}/{ext_mod}, which may not be the case for
                # _kernel_modules_install. Make that.
                mkdir -p ${{ROOT_DIR}}/{ext_mod}
-               ext_mod_rel=$(realpath ${{ROOT_DIR}}/{ext_mod} --relative-to ${{KERNEL_DIR}})
+               ext_mod_rel=$(realpath -m ${{ROOT_DIR}}/{ext_mod} --relative-to ${{KERNEL_DIR}})
              # Restore Modules.symvers
                mkdir -p $(dirname ${{COMMON_OUT_DIR}}/{module_symvers_restore_path})
                rsync -aL {module_symvers} ${{COMMON_OUT_DIR}}/{module_symvers_restore_path}
