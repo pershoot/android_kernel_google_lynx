@@ -14832,18 +14832,24 @@ void dhd_detach(dhd_pub_t *dhdp)
 		dev = ifp->net;
 	}
 
-	if (dev) {
-		rtnl_lock();
-		if (dev->flags & IFF_UP) {
-			/* If IFF_UP is still up, it indicates that
-			 * "ifconfig wlan0 down" hasn't been called.
-			 * So invoke dev_close explicitly here to
-			 * bring down the interface.
+	if (dev && (dev->flags & IFF_UP)) {
+		/* If IFF_UP is still up, it indicates that
+		* "ifconfig wlan0 down" hasn't been called.
+		* So invoke dev_close explicitly here to
+		* bring down the interface.
+		*/
+		if (!rtnl_trylock()) {
+			/* If rtnl lock is held,
+			 * skip this and let the unregister context handle it.
 			 */
-			DHD_TRACE(("IFF_UP flag is up. Enforcing dev_close from detach \n"));
+			DHD_ERROR(("%s: skip dev_close as rtnl_lock is already held\n",
+				__FUNCTION__));
+		} else {
+			DHD_TRACE(("IFF_UP flag is up."
+					" Enforcing dev_close from detach \n"));
 			dev_close(dev);
+			rtnl_unlock();
 		}
-		rtnl_unlock();
 	}
 
 	DHD_TRACE(("%s: Enter state 0x%x\n", __FUNCTION__, dhd->dhd_state));

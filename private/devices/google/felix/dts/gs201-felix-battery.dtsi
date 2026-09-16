@@ -182,7 +182,6 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&alrt_gauge_m_irq>;
 		maxim,irq-gpio = <&gpa7 3 GPIO_ACTIVE_LOW>;
-		maxim,irqf-shared;
 
 		maxim,rsense-default = <300>;
 

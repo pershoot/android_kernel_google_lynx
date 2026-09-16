@@ -9733,8 +9733,10 @@ error:
 	}
 
 #ifdef RPM_FAST_TRIGGER
-	WL_INFORM(("Trgger RPM Fast\n"));
-	dhd_trigger_rpm_fast(cfg);
+	if (wl_get_drv_status(cfg, CONNECTED, dev)) {
+		WL_INFORM(("Trgger RPM Fast\n"));
+		dhd_trigger_rpm_fast(cfg);
+	}
 #endif /* RPM_FAST_TRIGGER */
 
 	return err;
@@ -11453,6 +11455,14 @@ wl_cfg80211_send_action_frame(struct wiphy *wiphy, struct net_device *dev,
 	/* if failed, retry it. tx_retry_max value is configure by .... */
 	while ((ack == false) && (tx_retry++ < config_af_params.max_tx_retry) &&
 			!dwell_overflow) {
+		/* Bail out of retry loop if a fatal signal (SIGKILL) is pending.
+		 * This prevents holding rtnl_lock indefinitely during shutdown,
+		 * which can block reboot and cause a kernel panic.
+		 */
+		if (fatal_signal_pending(current)) {
+			WL_ERR(("Fatal signal pending. Aborting action frame TX retry.\n"));
+			break;
+		}
 #ifdef VSDB
 		if (af_params->channel) {
 			if (jiffies_to_msecs(jiffies - off_chan_started_jiffies) >
@@ -23370,6 +23380,7 @@ wl_cfg80211_set_mgmt_vndr_ies(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgde
 	wl_bss_vndr_ies_t *ies = NULL;
 	struct net_info *netinfo;
 	struct wireless_dev *wdev;
+	u32 required_len = 0;
 
 	if (!cfgdev) {
 		WL_ERR(("cfgdev is NULL\n"));
@@ -23440,6 +23451,41 @@ wl_cfg80211_set_mgmt_vndr_ies(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgde
 		WL_ERR(("extra IE size too big\n"));
 		ret = -ENOMEM;
 	} else {
+		u32 total_required_len = 0;
+		int j;
+		/* Calculate for deletes */
+		if (mgmt_ie_buf != NULL && *mgmt_ie_len > 0) {
+			if ((ret = wl_cfg80211_parse_vndr_ies(mgmt_ie_buf,
+				*mgmt_ie_len, &old_vndr_ies)) < 0) {
+				WL_ERR(("parse vndr ie failed in pre-check\n"));
+				goto exit;
+			}
+			for (j = 0; j < old_vndr_ies.count; j++) {
+				total_required_len +=
+					wl_cfgp2p_vndr_ie_write_len(
+						old_vndr_ies.ie_info[j].ie_len - VNDR_IE_FIXED_LEN);
+			}
+		}
+		/* Calculate for adds */
+		if (vndr_ie && vndr_ie_len) {
+			if ((ret = wl_cfg80211_parse_vndr_ies((const u8 *)vndr_ie, vndr_ie_len,
+					&new_vndr_ies)) < 0) {
+				WL_ERR(("parse vndr ie failed in pre-check\n"));
+				goto exit;
+			}
+			for (j = 0; j < new_vndr_ies.count; j++) {
+				total_required_len +=
+					wl_cfgp2p_vndr_ie_write_len(
+						new_vndr_ies.ie_info[j].ie_len - VNDR_IE_FIXED_LEN);
+			}
+		}
+		if (total_required_len > WL_VNDR_IE_MAXLEN) {
+			WL_ERR(("Total vendor IE size (%u) exceeds buffer (%u)\n",
+				total_required_len, WL_VNDR_IE_MAXLEN));
+			ret = -EINVAL;
+			goto exit;
+		}
+
 		/* parse and save new vndr_ie in curr_ie_buff before comparing it */
 		if (vndr_ie && vndr_ie_len && curr_ie_buf) {
 			ptr = curr_ie_buf;
@@ -23498,6 +23544,21 @@ wl_cfg80211_set_mgmt_vndr_ies(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgde
 						vndrie_info->vndrie.data[0]));
 				}
 
+				/* Bounds check before writing to g_mgmt_ie_buf for delete */
+				required_len =
+					wl_cfgp2p_vndr_ie_write_len(
+						vndrie_info->ie_len - VNDR_IE_FIXED_LEN);
+				if ((curr_ie_buf - (u8 *)g_mgmt_ie_buf) + required_len >
+					WL_VNDR_IE_MAXLEN) {
+					WL_ERR(("OOB write risk: delete command exceeds"
+						" g_mgmt_ie_buf size |"
+						" required_len=%d, remaining=%d\n",
+						(int)required_len,
+						(int)(WL_VNDR_IE_MAXLEN -
+						(curr_ie_buf - (u8 *)g_mgmt_ie_buf))));
+					ret = -EINVAL;
+					goto exit;
+				}
 				del_add_ie_buf_len = wl_cfgp2p_vndr_ie(cfg, curr_ie_buf,
 					pktflag, vndrie_info->vndrie.oui,
 					vndrie_info->vndrie.id,
@@ -23531,12 +23592,25 @@ wl_cfg80211_set_mgmt_vndr_ies(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgde
 						vndrie_info->vndrie.data[0]));
 				}
 
+				/* Call wl_cfgp2p_vndr_ie to get actual write length */
 				del_add_ie_buf_len = wl_cfgp2p_vndr_ie(cfg, curr_ie_buf,
-					pktflag, vndrie_info->vndrie.oui,
-					vndrie_info->vndrie.id,
-					vndrie_info->ie_ptr + VNDR_IE_FIXED_LEN,
-					vndrie_info->ie_len - VNDR_IE_FIXED_LEN,
-					"add");
+						pktflag, vndrie_info->vndrie.oui,
+						vndrie_info->vndrie.id,
+						vndrie_info->ie_ptr + VNDR_IE_FIXED_LEN,
+						vndrie_info->ie_len - VNDR_IE_FIXED_LEN,
+						"add");
+				/* Bounds check before writing to g_mgmt_ie_buf for add */
+				if ((curr_ie_buf - (u8 *)g_mgmt_ie_buf) + del_add_ie_buf_len >
+					WL_VNDR_IE_MAXLEN) {
+					WL_ERR(("OOB write risk: add command exceeds"
+							" g_mgmt_ie_buf size | "
+							"write_len=%d, remaining=%d\n",
+							(int)del_add_ie_buf_len,
+							(int)(WL_VNDR_IE_MAXLEN -
+							(curr_ie_buf - (u8 *)g_mgmt_ie_buf))));
+						ret = -EINVAL;
+						goto exit;
+				}
 
 				/* verify remained buf size before copy data */
 				if (remained_buf_len >= vndrie_info->ie_len) {
@@ -27929,6 +28003,7 @@ wl_cfg80211_wait_interruptible(struct bcm_cfg80211 *cfg, struct net_device *ndev
 {
 	long timeout;
 	u32 dwell_time = wait_dur_ms;
+	u32 elapsed;
 
 	while (TRUE) {
 		s64 start_wait_time = get_jiffies_64();
@@ -27936,14 +28011,23 @@ wl_cfg80211_wait_interruptible(struct bcm_cfg80211 *cfg, struct net_device *ndev
 				validate_wake_condition_fn(cfg, ndev),
 				msecs_to_jiffies(dwell_time));
 		if (timeout == -ERESTARTSYS) {
-			dwell_time -= jiffies_to_msecs(get_jiffies_64() - start_wait_time);
-			WL_DBG_MEM(("waitqueue was interrupted by a signal,"
-					"remaining dwell time %u\n", dwell_time));
-			if (dwell_time <= 0) {
-				WL_ERR(("Timed out. dwell_time:%u, timeout:%ld\n",
-						dwell_time, timeout));
+			/* Bail out immediately if a fatal signal (SIGKILL) is pending.
+			 * Continuing to wait while holding rtnl_lock can block
+			 * shutdown and cause a kernel panic.
+			 */
+			if (fatal_signal_pending(current)) {
+				WL_ERR(("Fatal signal pending. Aborting wait.\n"));
 				return timeout;
 			}
+			elapsed = jiffies_to_msecs(get_jiffies_64() - start_wait_time);
+			if (elapsed >= dwell_time) {
+				WL_ERR(("Timed out. dwell_time:%u, elapsed:%u, timeout:%ld\n",
+						dwell_time, elapsed, timeout));
+				return timeout;
+			}
+			dwell_time -= elapsed;
+			WL_DBG_MEM(("waitqueue was interrupted by a signal,"
+					"remaining dwell time %u\n", dwell_time));
 		} else if (timeout < 0) {
 			WL_ERR(("ACTION_FRAME_OFFCHAN_COMPLETE Event, didn't come. timeout:%ld\n",
 					timeout));

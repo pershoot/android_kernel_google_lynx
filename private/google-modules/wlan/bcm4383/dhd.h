@@ -1338,7 +1338,11 @@ typedef struct dhd_db7_info {
 } dhd_db7_info_t;
 
 #ifdef DHD_ART
+#ifdef WONDERTAP
+#define IS_ART_IFACE(ifname) strstr(ifname, "wondertap0")
+#else
 #define IS_ART_IFACE(ifname) strstr(ifname, "radiotap0")
+#endif /* WONDERTAP */
 typedef struct dhd_art_counters {
     uint64 rx_packets;
     uint64 rx_dbg_monitor_packets;
@@ -2094,6 +2098,10 @@ typedef struct dhd_pub {
 	bool host_art_enabled;
 	bool dongle_art_enabled;
 	bool usr_art_enabled;
+#ifdef WONDERTAP
+	bool rate_adaptation_enable;
+	uint8 tx_rate_mask;
+#endif /* WONDERTAP */
 #endif /* DHD_ART */
 #ifdef DHD_LPCAP
 	bool lpcap_active;
@@ -2203,6 +2211,8 @@ typedef struct dhd_pub {
 	bool force_wl_reg_off;
 	bool reset_5g_rffe_vio;
 #ifdef DHD_ART
+	u8 art_bssid[ETHER_ADDR_LEN]; /* BSSID filter */
+	u8 art_mac_addr[ETHER_ADDR_LEN];
 	dhd_art_counters_t art_counters;
 #endif /* DHD_ART */
 } dhd_pub_t;
@@ -3065,6 +3075,9 @@ void dhd_write_sssr_dump(dhd_pub_t *dhdp, uint32 dump_mode);
 #ifdef DNGL_AXI_ERROR_LOGGING
 void dhd_schedule_axi_error_dump(dhd_pub_t *dhdp, void *type);
 #endif /* DNGL_AXI_ERROR_LOGGING */
+#ifdef DHD_DEFER_L1SS_ENABLE_IN_RESUME
+void dhd_schedule_l1ss_enable(dhd_pub_t *dhdp);
+#endif /* DHD_DEFER_L1SS_ENABLE_IN_RESUME */
 #ifdef BCMPCIE
 void dhd_schedule_cto_recovery(dhd_pub_t *dhdp);
 #endif /* BCMPCIE */
@@ -3075,6 +3088,9 @@ static INLINE void dhd_write_sssr_dump(dhd_pub_t *dhd, uint32 dump_mode) { retur
 #ifdef DNGL_AXI_ERROR_LOGGING
 static INLINE void dhd_schedule_axi_error_dump(dhd_pub_t *dhdp, void *type) { return; }
 #endif /* DNGL_AXI_ERROR_LOGGING */
+#ifdef DHD_DEFER_L1SS_ENABLE_IN_RESUME
+void dhd_schedule_l1ss_enable(dhd_pub_t *dhdp) { return; }
+#endif /* DHD_DEFER_L1SS_ENABLE_IN_RESUME */
 /* For non-linux map dhd_schedule_cto_recovery to dhdpcie_cto_recovery_handler */
 #ifdef BCMPCIE
 #define dhd_schedule_cto_recovery(dhdp) dhdpcie_cto_recovery_handler(dhdp)
@@ -5350,4 +5366,7 @@ chanspec_t dhd_get_monitor_chspec(dhd_pub_t *dhdp);
 extern void *dhd_validate_packet_address(dhd_pub_t *dhd, void *pkt);
 extern void dhd_enqueue_inv_address_queue(struct dhd_pub *dhdp, void *pkt);
 #endif /* DHD_VALIDATE_PKT_ADDRESS */
+#ifdef WONDERTAP
+int dhd_set_art_tx_rate_mask(dhd_pub_t *dhd, u8 ifidx, uint8 tx_rate_mask);
+#endif /* WONDERTAP */
 #endif /* _dhd_h_ */

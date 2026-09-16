@@ -102,6 +102,7 @@
 #if defined(WL_CFG80211)
 #include <wl_cfg80211.h>
 #include <wl_cfgvif.h>
+#include <wl_cfgscan.h>
 #ifdef WL_BAM
 #include <wl_bam.h>
 #endif	/* WL_BAM */
@@ -3058,7 +3059,8 @@ _dhd_set_mac_address(dhd_info_t *dhd, int ifidx, uint8 *addr)
 	ret = dhd_iovar(&dhd->pub, ifidx, "cur_etheraddr", (char *)addr,
 			ETHER_ADDR_LEN, NULL, 0, TRUE);
 	if (ret < 0) {
-		DHD_ERROR(("%s: set cur_etheraddr failed\n", dhd_ifname(&dhd->pub, ifidx)));
+		DHD_ERROR(("%s: set cur_etheraddr failed. ret=%d\n",
+			dhd_ifname(&dhd->pub, ifidx), ret));
 	} else {
 		NETDEV_ADDR_SET(dhd->iflist[ifidx]->net, ETHER_ADDR_LEN, addr, ETHER_ADDR_LEN);
 		if (ifidx == 0)
@@ -5498,7 +5500,6 @@ dhd_set_monitor_ioctl(dhd_pub_t *dhdp, int ifidx, bool val)
 	return ret;
 }
 
-#define CMD_TX_ACTIVE 0x1
 int
 dhd_set_art_tx_active(dhd_pub_t *dhd, u8 ifidx, bool enable)
 {
@@ -5511,8 +5512,8 @@ dhd_set_art_tx_active(dhd_pub_t *dhd, u8 ifidx, bool enable)
 	pxtlv->len = sizeof(u32);
 	pxtlv->data[0] = 0x1;
 
-	ret = bcm_pack_xtlv_entry((uint8 **)&pxtlv, &mybuf_len, CMD_TX_ACTIVE, sizeof(enable),
-			(const u8 *)&enable, BCM_XTLV_OPTION_ALIGN32);
+	ret = bcm_pack_xtlv_entry((uint8 **)&pxtlv, &mybuf_len, WL_ART_CMD_TXACTIVE, sizeof(enable),
+		(const u8 *)&enable, BCM_XTLV_OPTION_ALIGN32);
 	if (ret != BCME_OK) {
 		ret = -EINVAL;
 		DHD_ERROR(("%s failed to pack tx enable, err: %s\n",
@@ -5532,6 +5533,41 @@ dhd_set_art_tx_active(dhd_pub_t *dhd, u8 ifidx, bool enable)
 }
 
 #define DEF_MONITOR_CHSPEC htod16(0xe09b)
+
+#ifdef WONDERTAP
+int
+dhd_set_art_tx_rate_mask(dhd_pub_t *dhd, u8 ifidx, uint8 tx_rate_mask)
+{
+	int ret = BCME_OK;
+	bcm_xtlv_t *pxtlv = NULL;
+	uint8 mybuf[WLC_IOCTL_SMLEN];
+	uint16 mybuf_len = sizeof(mybuf);
+	pxtlv = (bcm_xtlv_t *)mybuf;
+
+	pxtlv->len = sizeof(u32);
+	pxtlv->data[0] = 0x1;
+
+	ret = bcm_pack_xtlv_entry((uint8 **)&pxtlv, &mybuf_len, WL_ART_CMD_CONN_SELECT,
+		sizeof(tx_rate_mask), (const u8 *)&tx_rate_mask, BCM_XTLV_OPTION_ALIGN32);
+	if (ret != BCME_OK) {
+		ret = -EINVAL;
+		DHD_ERROR(("%s failed to pack tx_rate_mask, err: %s\n",
+			__FUNCTION__, bcmerrorstr(ret)));
+		return ret;
+	}
+
+	ret = dhd_iovar(dhd, ifidx, "art", (char *)&mybuf, sizeof(mybuf), NULL, 0, TRUE);
+	if (ret < 0) {
+		DHD_ERROR(("%s ART tx_rate_mask (0x%x) set fail, err: %s\n",
+			__FUNCTION__, tx_rate_mask, bcmerrorstr(ret)));
+	} else {
+		DHD_ERROR(("%s ART tx_rate_mask (0x%x) set pass\n",
+			__FUNCTION__, tx_rate_mask));
+	}
+
+	return ret;
+}
+#endif /* WONDERTAP */
 
 static int
 dhd_monitor_open(struct net_device *net)
@@ -5571,6 +5607,12 @@ dhd_monitor_open(struct net_device *net)
 #ifdef DHD_ART
 	else {
 		DHD_PRINT(("dhd_monitor_open: ART mode\n"));
+
+#ifdef WL_CFG80211
+		/* abort any scan in progress */
+		wl_cfgscan_scan_abort(cfg);
+#endif /* WL_CFG80211 */
+
 		/* If art_mac_addr is not initialized, use random macaddr */
 		if (ETHER_ISNULLADDR(dhdp->art_mac_addr)) {
 			u8 random_mac_addr[ETH_ALEN];
@@ -5611,7 +5653,11 @@ dhd_monitor_open(struct net_device *net)
 			goto exit;
 		}
 #endif /* WL_CFG80211 */
-
+#ifdef WONDERTAP
+		if (dhdp->rate_adaptation_enable) {
+			dhd_set_art_tx_rate_mask(dhdp, ifidx, dhdp->tx_rate_mask);
+		}
+#endif /* WONDERTAP */
 		ret = dhd_set_art_tx_active(dhdp, ifidx, TRUE);
 		if (ret < 0) {
 			goto exit;
@@ -15765,18 +15811,24 @@ dhd_pri_dev_close(dhd_pub_t *dhdp)
 		dev = ifp->net;
 	}
 
-	if (dev) {
-		rtnl_lock();
-		if (dev->flags & IFF_UP) {
-			/* If IFF_UP is still up, it indicates that
-			 * "ifconfig wlan0 down" hasn't been called.
-			 * So invoke dev_close explicitly here to
-			 * bring down the interface.
+	if (dev && (dev->flags & IFF_UP)) {
+		/* If IFF_UP is still up, it indicates that
+		* "ifconfig wlan0 down" hasn't been called.
+		* So invoke dev_close explicitly here to
+		* bring down the interface.
+		*/
+		if (!rtnl_trylock()) {
+			/* If rtnl lock is held,
+			 * skip this and let the unregister context handle it.
 			 */
-			DHD_TRACE(("IFF_UP flag is up. Enforcing dev_close from detach \n"));
+			DHD_ERROR(("%s: skip dev_close as rtnl_lock is already held\n",
+				__FUNCTION__));
+		} else {
+			DHD_TRACE(("IFF_UP flag is up."
+					" Enforcing dev_close from detach \n"));
 			dev_close(dev);
+			rtnl_unlock();
 		}
-		rtnl_unlock();
 	}
 }
 

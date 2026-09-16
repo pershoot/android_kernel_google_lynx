@@ -9,6 +9,13 @@ enum wondertap_state {
     WONDERTAP_STATE_UP,
 };
 
+/* Maximum MCS index supported. */
+#define WONDERTAP_RA_MAX_MCS 7
+/* Maximum number of spatial streams supported. */
+#define WONDERTAP_RA_MAX_NSS 2
+/* Maximum operational bandwidth for rate selection. */
+#define WONDERTAP_RA_MAX_BW WONDERTAP_RATE_BW_80
+
 /*
  * Bitflags to track which cached values have been explicitly set
  * by the user.
@@ -17,6 +24,13 @@ enum wondertap_state {
 #define WONDERTAP_CACHE_TX_RATE_SET      (1 << 1)
 #define WONDERTAP_CACHE_BSSID_SET        (1 << 2)
 #define WONDERTAP_CACHE_COUNTRY_CODE_SET (1 << 3)
+
+struct wonder_sta_update_work {
+	struct work_struct work;
+	struct wonder_data *wonder;
+	struct wondertap_station_info sta_info;
+	enum wondertap_station_action action;
+};
 
 struct wondertap_data {
 	void *vendor_handle;
@@ -28,10 +42,15 @@ struct wondertap_data {
 	struct wondertap_frame_filter_params cached_frame_filter;
 	struct wondertap_fixed_tx_rate_params cached_tx_rate;
 	struct wondertap_capability cap;
+	struct wondertap_init_params init_params;
+	struct channel_schedule_request cached_channel_schedule;
 	u8 cached_bssid[ETH_ALEN];
 	char cached_country_code[3];
 	enum wondertap_ver ver;
+	enum wondertap_ver wifi_ver;
 	struct device_node *wlan_node;
+	/* MAC address for station query via debugfs */
+	u8 query_mac_addr[ETH_ALEN];
 	const struct wondertap_ops *wonder_ops;
 };
 
@@ -180,6 +199,53 @@ int wondertap_get_interface_mac_address(struct wondertap_data *wondertap, u8 (*m
  * @return 0 on success, or a negative error code on failure.
  */
 int wondertap_set_bssid_filter(struct wondertap_data *wondertap, const u8 *bssid);
+
+/**
+ * @brief Schedules a channel switch request.
+ *
+ * @param wondertap A pointer to the wondertap instance data.
+ * @param request A pointer to the channel schedule request parameters.
+ *
+ * @return 0 on success, or a negative error code on failure.
+ */
+int wondertap_channel_schedule_request(struct wondertap_data *wondertap,
+				       const struct channel_schedule_request *request);
+
+/**
+ * @brief Get Current MAC TSF from the vendor
+ *
+ * @param handle The opaque driver instance handle.
+ * @param mac_tsf MAC TSF will be utilized for the channel list request.
+ *
+ * @return 0 on success, or a negative error code on failure.
+ */
+int wondertap_get_mac_tsf(struct wondertap_data *wondertap, u32 *mac_tsf);
+
+
+/**
+ * @brief Retrieves the channel status report.
+ *
+ * @param wondertap A pointer to the wondertap instance data.
+ * @param report A pointer to the channel status report structure to be
+ * populated with the current hopping status and channel statistics.
+ *
+ * @return 0 on success, or a negative error code on failure.
+ */
+int wondertap_get_channel_status_report(struct wondertap_data *wondertap,
+				    struct wondertap_channel_status_report *report);
+
+/**
+ * @brief Adds, updates, or removes station information in the vendor driver.
+ *
+ * @param wondertap A pointer to the wondertap instance data.
+ * @param action The action to perform on the station (NEW, UPDATE, or DEL).
+ * @param info A pointer to the station information structure.
+ *
+ * @return 0 on success, or a negative error code on failure.
+ */
+int wondertap_set_station_info(struct wondertap_data *wondertap,
+		const enum wondertap_station_action action,
+		struct wondertap_station_info *info);
 
 /**
  * @brief Register a vendor's wondertap operations.

@@ -34,6 +34,7 @@ device_build(
         "//private/google-modules/touch/common:touch.common",
         "//private/google-modules/touch/goodix",
         "//private/google-modules/wlan/bcm4383:bcmdhd4383",
+        "//private/google-modules/wlan/wonder:wonder",
     ],
     insmod_cfgs = glob(["insmod_cfg/*.cfg"]),
     kconfig_exts = ["Kconfig.ext.akita"],

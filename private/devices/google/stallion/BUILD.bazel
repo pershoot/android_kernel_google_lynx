@@ -35,6 +35,7 @@ device_build(
         "//private/google-modules/touch/focaltech/ft3683u",
         "//private/google-modules/wlan/bcm4383:bcmdhd4383",
         "//private/google-modules/wlan/wlan_ptracker",
+        "//private/google-modules/wlan/wonder:wonder",
     ],
     insmod_cfgs = glob(["insmod_cfg/*.cfg"]),
     kconfig_exts = ["Kconfig.ext.stallion"],

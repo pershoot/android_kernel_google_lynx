@@ -35,8 +35,7 @@ def _create_merge_dot_config_cmd(defconfig_fragments_paths_expr):
                 mkdir -p $(dirname ${{new_fragment}})
                 # Use Python, not sed, to support non-greedy regex matching
                 # I avoided perl because it is not hermetic yet.
-                python3 -c 'import re, sys; [print(re.sub(r"(\\S+=[^#]*?)\\s*#.*$", r"\\1", l.rstrip("\\
-n"))) for l in open(sys.argv[1])]' ${{fragment}} > ${{new_fragment}}
+                python3 -c 'import re, sys; [print(re.sub(r"(\\S+=[^#]*?)\\s*#.*$", r"\\1", l.rstrip("\\n"))) for l in open(sys.argv[1])]' ${{fragment}} > ${{new_fragment}}
                 sanitized_fragments="${{sanitized_fragments}} ${{new_fragment}}"
             done
 

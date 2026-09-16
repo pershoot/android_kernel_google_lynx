@@ -40,5 +40,3 @@
 #include "zumapro-stallion-udfps.dtsi"
 #include "zuma-stallion-wlan.dtsi"
 #include "zumapro-stallion-pmic.dtsi"
-
-#include "zumapro-stallion-wonder.dtsi"

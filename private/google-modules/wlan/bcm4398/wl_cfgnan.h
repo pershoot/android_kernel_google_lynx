@@ -369,6 +369,9 @@ enum nan_dp_states {
 	NAN_DP_STATE_ENABLED = 1
 };
 
+/* attr_hdr(3) */
+#define SDEA_INFO_LEN_FIELD_SIZE	3u
+
 enum {
 	SRF_TYPE_BLOOM_FILTER = 0,
 	SRF_TYPE_SEQ_MAC_ADDR = 1

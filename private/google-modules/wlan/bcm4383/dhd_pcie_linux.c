@@ -874,10 +874,6 @@ static int dhdpcie_pm_resume(struct device *dev)
 	DHD_GENERAL_LOCK(bus->dhd, flags);
 	DHD_BUS_BUSY_SET_RESUME_IN_PROGRESS(bus->dhd);
 	DHD_GENERAL_UNLOCK(bus->dhd, flags);
-#ifdef DHD_ENABLE_L1SS_FROM_PM_COMPLETE
-	DHD_PRINT(("%s: Set system_resume_in_progress\n", __FUNCTION__));
-	bus->system_resume_in_progress = TRUE;
-#endif /* DHD_ENABLE_L1SS_FROM_PM_COMPLETE */
 
 	if (bus->dhd->up)
 		ret = dhdpcie_set_suspend_resume(bus, FALSE);
@@ -908,17 +904,6 @@ static void dhdpcie_pm_complete(struct device *dev)
 #endif /* WL_TWT */
 
 	bus->chk_pm = FALSE;
-
-#ifdef DHD_ENABLE_L1SS_FROM_PM_COMPLETE
-	DHD_PRINT(("%s: Clear system_resume_in_progress\n", __FUNCTION__));
-	bus->system_resume_in_progress = FALSE;
-
-	/*
-	 * Re-enable L1ss in Resume path. Implementation defalts to NOP
-	 * If need override in the paltform file
-	 */
-	dhd_plat_l1ss_ctrl(1);
-#endif /* DHD_ENABLE_L1SS_FROM_PM_COMPLETE */
 
 	return;
 }
@@ -1306,7 +1291,13 @@ static int dhdpcie_suspend_dev(struct pci_dev *dev)
 #else
 	DHD_PRINT(("%s: Enter\n", __FUNCTION__));
 #endif /* CUSTOMER_HW4_DEBUG */
-
+#ifdef DHD_DEFER_L1SS_ENABLE_IN_RESUME
+	/*
+	 * Ensure any pending L1SS enablement is finished or cancelled
+	 * before we proceed to disable it for suspend.
+	 */
+	cancel_work_sync(&bus->l1ss_enable_work);
+#endif /* DHD_DEFER_L1SS_ENABLE_IN_RESUME */
 	/*
 	 * Disable L1ss on EP and RC side ... defaults to NOP
 	 * If needed implement this function in the dhd_custom_xxx.c
@@ -1444,17 +1435,20 @@ static int dhdpcie_resume_dev(struct pci_dev *dev)
 	dhdpcie_suspend_dump_rc_cfgregs(pch->bus, "AFTER_EP_RESUME");
 	dhdpcie_suspend_dump_cfgregs(pch->bus, "AFTER_EP_RESUME");
 
+#ifndef DHD_DEFER_L1SS_ENABLE_IN_RESUME
 	/*
-	 * Re-enable L1ss in Resume path. Implementation defalts to NOP
+	 * Re-enable L1ss in Resume path. Implementation defaults to NOP
 	 * If need override in the paltform file
+	 *
+	 * case1:
+	 * When DHD_DEFER_L1SS_ENABLE_IN_RESUME is defined, l1ss is enabled
+	 * from dhd_bus_handle_mb_data().
+	 *
+	 * case2:
+	 * when DHD_DEFER_L1SS_ENABLE_IN_RESUME is not defined, l1ss is enabled here
 	 */
-#ifdef DHD_ENABLE_L1SS_FROM_PM_COMPLETE
-	if (pch->bus->system_resume_in_progress == FALSE) {
-		dhd_plat_l1ss_ctrl(1);
-	}
-#else
 	dhd_plat_l1ss_ctrl(1);
-#endif /* DHD_ENABLE_L1SS_FROM_PM_COMPLETE */
+#endif /* DHD_DEFER_L1SS_ENABLE_IN_RESUME */
 
 
 out:

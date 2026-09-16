@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
 source "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/envsetup.sh"
+source "$(dirname "$(realpath "${BASH_SOURCE[0]}")")/cog.sh"
 
 OUTPUT_ROOT=
 
@@ -29,40 +30,6 @@ function init() {
   readonly OUTPUT_ROOT
 }
 
-function setup_cog_workspace() {
-  if [[ ! "${WORKSPACE_DIR}" =~ ^/google/cog/ ]]; then
-    return 0
-  fi
-
-  if [[ ! "${OUTPUT_ROOT}" =~ ^"${WORKSPACE_DIR}/" ]]; then
-    return 0
-  fi
-
-  if [[ -d "${OUTPUT_ROOT}" && ! -L "${OUTPUT_ROOT}" ]]; then
-    echo "Detected existing output directory in the Cog workspace which is not supported. Removing."
-    rm -rf "${OUTPUT_ROOT}"
-  fi
-
-  local -r cog_workspace_name="$(basename "$(dirname "${WORKSPACE_DIR}")")"
-  local -r link_destination_dir="${HOME}/.cache/cog/${cog_workspace_name}"
-
-  local link_destination="${OUTPUT_ROOT/"${WORKSPACE_DIR}"/"${link_destination_dir}"}"
-  if [[ -L "${OUTPUT_ROOT}" ]]; then
-    # Respect the existing link destination.
-    link_destination="$(readlink -m "${OUTPUT_ROOT}")"
-  fi
-  readonly link_destination
-
-  mkdir -p "${link_destination}"
-
-  if [[ -L "${OUTPUT_ROOT}" ]]; then
-    return 0
-  fi
-
-  echo "Creating symlink: ${OUTPUT_ROOT} -> ${link_destination}"
-  ln -snf "${link_destination}" "${OUTPUT_ROOT}"
-}
-
 function import_device_bazelrc () {
   local search_dir="${WORKSPACE_DIR}/private/devices"
   local gen_device_bazelrc="${OUTPUT_ROOT}/bazel/bazelrc/device.bazelrc"
@@ -82,7 +49,7 @@ function import_device_bazelrc () {
 
 function main() {
   init "$@"
-  setup_cog_workspace
+  setup_cog_output_dir "${OUTPUT_ROOT}"
   import_device_bazelrc
   exec "${WORKSPACE_DIR}/build/kernel/kleaf/bazel.sh" "$@"
 }

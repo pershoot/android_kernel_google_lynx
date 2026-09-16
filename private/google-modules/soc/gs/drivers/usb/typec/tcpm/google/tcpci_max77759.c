@@ -722,8 +722,9 @@ EXPORT_SYMBOL_GPL(register_data_active_callback);
 
 void register_orientation_callback(void (*callback)(void *orientation_payload), void *data)
 {
-	orientation_callback = callback;
 	orientation_payload = data;
+	smp_wmb();
+	orientation_callback = callback;
 }
 EXPORT_SYMBOL_GPL(register_orientation_callback);
 

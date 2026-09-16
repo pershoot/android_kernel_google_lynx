@@ -9622,6 +9622,13 @@ dhdpcie_bus_doiovar(dhd_bus_t *bus, const bcm_iovar_t *vi, uint32 actionid, cons
 
 	case IOV_SVAL(IOV_RX_METADATALEN):
 #if !(defined(BCM_ROUTER_DHD))
+		/* Reject negative values */
+		if (int_val < 0) {
+			bcmerror = BCME_BADARG;
+			break;
+		}
+
+		/* Enforce upper bound */
 		if (int_val > 64) {
 			bcmerror = BCME_BUFTOOLONG;
 			break;
@@ -9663,6 +9670,13 @@ dhdpcie_bus_doiovar(dhd_bus_t *bus, const bcm_iovar_t *vi, uint32 actionid, cons
 
 	case IOV_SVAL(IOV_TX_METADATALEN):
 #if !(defined(BCM_ROUTER_DHD))
+		/* Reject negative values */
+		if (int_val < 0) {
+			bcmerror = BCME_BADARG;
+			break;
+		}
+
+		/* Enforce upper bound */
 		if (int_val > 64) {
 			bcmerror = BCME_BUFTOOLONG;
 			break;
@@ -13426,6 +13440,11 @@ sched_axi:
 }
 #endif /* DNGL_AXI_ERROR_LOGGING */
 
+/* Limit TX flowring processing time per DPC pass to avoid hard lockup. */
+#ifndef DHD_TXFLOWRINGS_DPC_BUDGET_NSEC
+#define DHD_TXFLOWRINGS_DPC_BUDGET_NSEC 200000ULL      /* 200 usec */
+#endif /* !DHD_TXFLOWRINGS_DPC_BUDGET_NSEC */
+
 /**
  * Brings transmit packets on all flow rings closer to the dongle, by moving (a subset) from their
  * flow queue to their flow ring.
@@ -13439,6 +13458,8 @@ dhd_update_txflowrings(dhd_pub_t *dhd)
 	struct dhd_bus *bus = dhd->bus;
 	int count = 0;
 	bool more = FALSE;
+	uint64 start_ts = OSL_LOCALTIME_NS();
+	uint64 now_ts;
 
 	if (dhd_query_bus_erros(dhd)) {
 		return more;
@@ -13473,8 +13494,18 @@ dhd_update_txflowrings(dhd_pub_t *dhd)
 		/* Ensure that the flowring node has valid contents */
 		ASSERT(flow_ring_node->prot_info != NULL);
 
-		more = dhd_prot_update_txflowring(dhd, flow_ring_node->flowid,
+		more |= dhd_prot_update_txflowring(dhd, flow_ring_node->flowid,
 			flow_ring_node->prot_info);
+
+		now_ts = OSL_LOCALTIME_NS();
+		if ((now_ts - start_ts) >= DHD_TXFLOWRINGS_DPC_BUDGET_NSEC) {
+			DHD_INFO(("%s: txflowring budget hit (%llu nsec), rescheduling\n",
+				__FUNCTION__,
+				(unsigned long long)DHD_TXFLOWRINGS_DPC_BUDGET_NSEC));
+			/* Keep DPC reschedule path active for remaining rings/packets. */
+			more = TRUE;
+			break;
+		}
 	}
 	DHD_FLOWRING_LIST_UNLOCK(bus->dhd->flowring_list_lock, flags);
 
@@ -14884,24 +14915,6 @@ dhdpci_bus_read_frames(dhd_bus_t *bus)
 	dhdpci_bus_rte_log_time_sync_poll(bus);
 #endif /* DHD_H2D_LOG_TIME_SYNC */
 
-#if defined(DHD_WAKE_STATUS)
-	/* Check if host was woken up by any packets */
-	if (dhd_bus_get_bus_wake(bus->dhd) > 0) {
-		/*
-		 * If wake is due to Rx packets,
-		 * pktwake info will be printed and cleared from dhd_rx_frame()
-		 */
-		DHD_PRINT(("#### dhdpcie_host_wake: rxcpl:%d ctrlcpl:%d txcpl:%d evtlog:%d ####\n",
-			rxcpl_items, ctrlcpl_items, txcpl_items, evtlog_items));
-
-		dhd_bus_set_get_bus_wake(bus->dhd, 0);
-
-		if (rxcpl_items > 0) {
-			/* Request packet dump for first Rx packet */
-			dhd_bus_set_get_bus_wake_pkt_dump(bus->dhd, 1);
-		}
-	}
-#endif /* DHD_WAKE_STATUS */
 	return more;
 }
 

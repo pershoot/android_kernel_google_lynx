@@ -23694,6 +23694,7 @@ wl_cfg80211_set_mgmt_vndr_ies(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgde
 	wl_bss_vndr_ies_t *ies = NULL;
 	struct net_info *netinfo;
 	struct wireless_dev *wdev;
+	u32 required_len = 0;
 
 	if (!cfgdev) {
 		WL_ERR(("cfgdev is NULL\n"));
@@ -23764,6 +23765,41 @@ wl_cfg80211_set_mgmt_vndr_ies(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgde
 		WL_ERR(("extra IE size too big\n"));
 		ret = -ENOMEM;
 	} else {
+		u32 total_required_len = 0;
+		int j;
+		/* Calculate for deletes */
+		if (mgmt_ie_buf != NULL && *mgmt_ie_len > 0) {
+			if ((ret = wl_cfg80211_parse_vndr_ies(mgmt_ie_buf,
+				*mgmt_ie_len, &old_vndr_ies)) < 0) {
+				WL_ERR(("parse vndr ie failed in pre-check\n"));
+				goto exit;
+			}
+			for (j = 0; j < old_vndr_ies.count; j++) {
+				total_required_len +=
+					wl_cfgp2p_vndr_ie_write_len(
+						old_vndr_ies.ie_info[j].ie_len - VNDR_IE_FIXED_LEN);
+			}
+		}
+		/* Calculate for adds */
+		if (vndr_ie && vndr_ie_len) {
+			if ((ret = wl_cfg80211_parse_vndr_ies((const u8 *)vndr_ie, vndr_ie_len,
+					&new_vndr_ies)) < 0) {
+				WL_ERR(("parse vndr ie failed in pre-check\n"));
+				goto exit;
+			}
+			for (j = 0; j < new_vndr_ies.count; j++) {
+				total_required_len +=
+					wl_cfgp2p_vndr_ie_write_len(
+						new_vndr_ies.ie_info[j].ie_len - VNDR_IE_FIXED_LEN);
+			}
+		}
+		if (total_required_len > WL_VNDR_IE_MAXLEN) {
+			WL_ERR(("Total vendor IE size (%u) exceeds buffer (%u)\n",
+				total_required_len, WL_VNDR_IE_MAXLEN));
+			ret = -EINVAL;
+			goto exit;
+		}
+
 		/* parse and save new vndr_ie in curr_ie_buff before comparing it */
 		if (vndr_ie && vndr_ie_len && curr_ie_buf) {
 			ptr = curr_ie_buf;
@@ -23822,6 +23858,21 @@ wl_cfg80211_set_mgmt_vndr_ies(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgde
 						vndrie_info->vndrie.data[0]));
 				}
 
+				/* Bounds check before writing to g_mgmt_ie_buf for delete */
+				required_len =
+					wl_cfgp2p_vndr_ie_write_len(
+						vndrie_info->ie_len - VNDR_IE_FIXED_LEN);
+				if ((curr_ie_buf - (u8 *)g_mgmt_ie_buf) + required_len >
+					WL_VNDR_IE_MAXLEN) {
+					WL_ERR(("OOB write risk: delete command exceeds"
+						" g_mgmt_ie_buf size |"
+						" required_len=%d, remaining=%d\n",
+						(int)required_len,
+						(int)(WL_VNDR_IE_MAXLEN -
+						(curr_ie_buf - (u8 *)g_mgmt_ie_buf))));
+					ret = -EINVAL;
+					goto exit;
+				}
 				del_add_ie_buf_len = wl_cfgp2p_vndr_ie(cfg, curr_ie_buf,
 					pktflag, vndrie_info->vndrie.oui,
 					vndrie_info->vndrie.id,
@@ -23855,12 +23906,25 @@ wl_cfg80211_set_mgmt_vndr_ies(struct bcm_cfg80211 *cfg, bcm_struct_cfgdev *cfgde
 						vndrie_info->vndrie.data[0]));
 				}
 
+				/* Call wl_cfgp2p_vndr_ie to get actual write length */
 				del_add_ie_buf_len = wl_cfgp2p_vndr_ie(cfg, curr_ie_buf,
-					pktflag, vndrie_info->vndrie.oui,
-					vndrie_info->vndrie.id,
-					vndrie_info->ie_ptr + VNDR_IE_FIXED_LEN,
-					vndrie_info->ie_len - VNDR_IE_FIXED_LEN,
-					"add");
+						pktflag, vndrie_info->vndrie.oui,
+						vndrie_info->vndrie.id,
+						vndrie_info->ie_ptr + VNDR_IE_FIXED_LEN,
+						vndrie_info->ie_len - VNDR_IE_FIXED_LEN,
+						"add");
+				/* Bounds check before writing to g_mgmt_ie_buf for add */
+				if ((curr_ie_buf - (u8 *)g_mgmt_ie_buf) + del_add_ie_buf_len >
+					WL_VNDR_IE_MAXLEN) {
+					WL_ERR(("OOB write risk: add command exceeds"
+							" g_mgmt_ie_buf size | "
+							"write_len=%d, remaining=%d\n",
+							(int)del_add_ie_buf_len,
+							(int)(WL_VNDR_IE_MAXLEN -
+							(curr_ie_buf - (u8 *)g_mgmt_ie_buf))));
+						ret = -EINVAL;
+						goto exit;
+				}
 
 				/* verify remained buf size before copy data */
 				if (remained_buf_len >= vndrie_info->ie_len) {
@@ -27227,6 +27291,7 @@ wl_notify_start_auth(struct bcm_cfg80211 *cfg,
 	struct cfg80211_external_auth_params ext_auth_param;
 	struct net_device *ndev = cfgdev_to_wlc_ndev(cfgdev, cfg);
 	u32 datalen = be32_to_cpu(e->datalen);
+	u32 reason = be32_to_cpu(e->reason);
 	wl_auth_start_evt_t *evt_data = (wl_auth_start_evt_t *)data;
 	wl_assoc_mgr_cmd_t cmd;
 	struct wireless_dev *wdev = ndev->ieee80211_ptr;
@@ -27275,10 +27340,15 @@ wl_notify_start_auth(struct bcm_cfg80211 *cfg,
 	}
 #endif /* (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)) || defined(WL_EXT_AUTH_BKPORT) */
 	ext_auth_param.action = NL80211_EXTERNAL_AUTH_START;
-	ext_auth_param.key_mgmt_suite = ntoh32(WLAN_AKM_SUITE_SAE_SHA256);
+	if (reason == RSN_AKM_SAE_EXT_PSK) {
+		ext_auth_param.key_mgmt_suite = WLAN_AKM_SUITE_SAE_EXT_PSK;
+	} else {
+		/* For RSN_AKM_SAE_PSK */
+		ext_auth_param.key_mgmt_suite = WLAN_AKM_SUITE_SAE_SHA256;
+	}
 
-	WL_INFORM_MEM(("call cfg80211_external_auth_request, BSSID:"MACDBG"\n",
-		MAC2STRDBG(&ext_auth_param.bssid)));
+	WL_INFORM_MEM(("call cfg80211_external_auth_request, BSSID:"MACDBG", AKM Suite:0x%08x\n",
+		MAC2STRDBG(&ext_auth_param.bssid), ext_auth_param.key_mgmt_suite));
 
 	wl_cfg80211_wdev_lock(wdev);
 	err = cfg80211_external_auth_request(ndev, &ext_auth_param, GFP_KERNEL);

@@ -128,6 +128,19 @@ bool wl_cfgp2p_is_pub_action(void *frame, u32 frame_len)
 	return false;
 }
 
+/*
+ * Returns the number of bytes that wl_cfgp2p_vndr_ie will write for a given datalen.
+ * This matches the offset calculation in wl_cfgp2p_vndr_ie.
+ */
+u32 wl_cfgp2p_vndr_ie_write_len(u32 datalen)
+{
+	u8 *base = (u8 *)0;
+	u8 *data_ptr = (u8 *)&(((vndr_ie_setbuf_t *)base)
+		->vndr_ie_buffer.vndr_ie_list->vndr_ie_data.data[0]);
+	u32 data_offset = data_ptr - base;
+	return data_offset + datalen;
+}
+
 bool wl_cfgp2p_is_p2p_action(void *frame, u32 frame_len)
 {
 	wifi_p2p_action_frame_t *act_frm;

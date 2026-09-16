@@ -26,6 +26,12 @@ from clang.cindex import TokenGroup
 from clang.cindex import TokenKind
 from clang.cindex import TranslationUnit
 
+# Compatibility for older versions of libclang that don't have Cursor.is_null()
+if not hasattr(clang.cindex.Cursor, 'is_null'):
+    def is_null(self):
+        return self.kind == clang.cindex.CursorKind.INVALID_FILE
+    clang.cindex.Cursor.is_null = is_null
+
 # Set up LD_LIBRARY_PATH to include libclang.so, libLLVM.so, and etc.
 # Note that setting LD_LIBRARY_PATH with os.putenv() sometimes doesn't help.
 clang.cindex.Config.set_library_file(os.path.join(top, 'prebuilts/clang/host/linux-x86/clang-stable/lib/libclang.so'))
@@ -1066,7 +1072,8 @@ class Block(object):
                 buf = ''
                 newline = True
             # We prefer a new line for each constant in enum.
-            elif t.id == ',' and t.cursor.kind == CursorKind.ENUM_DECL:
+            elif (t.id == ',' and not t.cursor.is_null() and
+                  t.cursor.kind == CursorKind.ENUM_DECL):
                 result.append(strip_space(buf) + ',')
                 buf = ''
                 newline = True
@@ -1547,14 +1554,23 @@ class BlockParser(object):
 
             result = []
             if extent is None:
-                extent = tokens[i].cursor.extent
+                cursor = tokens[i].cursor
+                if cursor.is_null():
+                    return consume_line(i, tokens)
+                extent = cursor.extent
 
             while i < len(tokens) and tokens[i].location in extent:
                 t = tokens[i]
+                cursor = t.cursor
+                if cursor.is_null():
+                    result.append(t)
+                    i += 1
+                    continue
+
                 if debugBlockParser:
-                    print(' ' * 2, t.id, t.kind, t.cursor.kind)
-                if (detect_change and t.cursor.extent != extent and
-                    t.cursor.kind == CursorKind.PREPROCESSING_DIRECTIVE):
+                    print(' ' * 2, t.id, t.kind, cursor.kind)
+                if (detect_change and cursor.extent != extent and
+                    cursor.kind == CursorKind.PREPROCESSING_DIRECTIVE):
                     break
                 result.append(t)
                 i += 1
@@ -1565,7 +1581,9 @@ class BlockParser(object):
             result = []
             line = tokens[i].location.line
             while i < len(tokens) and tokens[i].location.line == line:
-                if tokens[i].cursor.kind == CursorKind.PREPROCESSING_DIRECTIVE:
+                cursor = tokens[i].cursor
+                if (not cursor.is_null() and
+                        cursor.kind == CursorKind.PREPROCESSING_DIRECTIVE):
                     break
                 result.append(tokens[i])
                 i += 1
@@ -1582,6 +1600,12 @@ class BlockParser(object):
         while i < len(tokens):
             t = tokens[i]
             cursor = t.cursor
+
+            # With newer versions of clang, the cursor can be null.
+            if cursor.is_null():
+                (i, ret) = consume_line(i, tokens)
+                buf += ret
+                continue
 
             if debugBlockParser:
                 print ("%d: Processing [%s], kind=[%s], cursor=[%s], "

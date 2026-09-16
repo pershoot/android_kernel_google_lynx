@@ -40,5 +40,3 @@
 #include "zuma-tegu-wlan.dtsi"
 #include "zumapro-tegu-bcl.dtsi"
 #include "zumapro/zumapro-16kb-dma-heap.dtsi"
-
-#include "zumapro-tegu-wonder.dtsi"

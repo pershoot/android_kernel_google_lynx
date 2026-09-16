@@ -1,9 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Google Wonder WiFi Virtual Soft-MAC Driver
+ *
+ * Vendor interface implementation.
+ */
+#include <asm-generic/errno.h>
 #define LOG_MODULE_NAME "wondertap"
 
 #include <linux/errno.h>
 #include <linux/export.h>
 #include <linux/etherdevice.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
+#include <net/mac80211.h>
 
 #include "include/wonder/wondertap.h"
 #include "wondertap_internal.h"
@@ -65,6 +74,9 @@ static void wondertap_dump_init_params(struct wondertap_init_params *params)
 	wonder_info("    MAC: %02x:XX:XX:XX:XX:%02x\n", params->mac_addr[0],
 		params->mac_addr[5]);
 	wonder_info("    BSSID: %02x:XX:XX:XX:XX:%02x\n", params->bssid[0], params->bssid[5]);
+	wonder_info("    Features: AMSDU %d, AMPDU %d, RA %d, CH %d\n", params->amsdu_enable,
+		params->ampdu_enable, params->rate_adaptation_enable,
+		params->channel_hopping_enable);
 	wonder_info("===============================================\n");
 }
 
@@ -93,45 +105,81 @@ int wondertap_init(struct wondertap_data *wondertap, const struct wondertap_init
 		goto out;
 	}
 
-	if (wondertap_ops && wondertap_ops->init) {
-		eth_random_addr(wondertap->mac_addr);
-		params.channel = wondertap->cached_freq;
-		params.tx_rate = wondertap->cached_tx_rate;
-		memcpy(params.bssid, wondertap->cached_bssid, ETH_ALEN);
-		memcpy(params.mac_addr, wondertap->mac_addr, ETH_ALEN);
-		memcpy(params.country_code, wondertap->cached_country_code, sizeof(wondertap->cached_country_code));
+	eth_random_addr(wondertap->mac_addr);
+	params.channel = wondertap->cached_freq;
+	params.tx_rate = wondertap->cached_tx_rate;
+	memcpy(params.bssid, wondertap->cached_bssid, ETH_ALEN);
+	memcpy(params.mac_addr, wondertap->mac_addr, ETH_ALEN);
+	memcpy(params.country_code, wondertap->cached_country_code,
+	       sizeof(wondertap->cached_country_code));
 
-		if (_params->rate_adaptation_enable) {
-			params.rate_adaptation_enable = _params->rate_adaptation_enable;
-			params.tx_rate_mask.max_preamble = wondertap->cached_tx_rate.preamble;
-			params.tx_rate_mask.max_bw = wondertap->cached_tx_rate.bw;
-			params.tx_rate_mask.max_nss = wondertap->cached_tx_rate.nss;
-			params.tx_rate_mask.max_mcs = wondertap->cached_tx_rate.mcs;
-		}
+	params.rate_adaptation_enable = _params->rate_adaptation_enable;
+	if (_params->rate_adaptation_enable) {
+		params.tx_rate_mask.max_preamble = wondertap->cached_tx_rate.preamble;
+		params.tx_rate_mask.max_bw = WONDERTAP_RA_MAX_BW;
+		params.tx_rate_mask.max_nss = WONDERTAP_RA_MAX_NSS;
+		params.tx_rate_mask.max_mcs = WONDERTAP_RA_MAX_MCS;
+	}
 
-		wondertap_dump_init_params(&params);
-		for (retry = 0; retry <= WONDER_INIT_RETRY_CNT; retry++) {
-			ret = wondertap_ops->init(&wondertap->vendor_handle, &params);
-			if (ret == 0)
-				break;
+	params.channel_hopping_enable = _params->channel_hopping_enable;
+	params.ampdu_enable = _params->ampdu_enable;
+	params.amsdu_enable = _params->amsdu_enable;
 
-			if (retry < WONDER_INIT_RETRY_CNT) {
-				wonder_warn(
-					"Vendor init failed: %d. Retrying in %d ms...(retry %d)\n",
-					ret, WONDER_INIT_RETRY_WAIT, retry + 1);
-				msleep(WONDER_INIT_RETRY_WAIT);
-			}
-		}
-		if (ret == 0) {
-			wondertap->state = WONDERTAP_STATE_UP;
-			wonder_info("Vendor init successful. State set to UP.\n");
-		} else {
-			wonder_error("Vendor init failed: %d\n", ret);
+	wondertap_dump_init_params(&params);
+	for (retry = 0; retry <= WONDER_INIT_RETRY_CNT; retry++) {
+
+		if (!wondertap_ops || !wondertap_ops->init) {
+			wonder_error("Vendor operation 'init' is not implemented\n");
+			ret = -EOPNOTSUPP;
 			goto out;
 		}
+
+		ret = wondertap_ops->init(&wondertap->vendor_handle, &params);
+		if (ret == 0)
+			break;
+
+		if (retry < WONDER_INIT_RETRY_CNT) {
+			wonder_warn(
+				"Vendor init failed: %d. Retrying in %d ms...(retry %d)\n",
+				ret, WONDER_INIT_RETRY_WAIT, retry + 1);
+			msleep(WONDER_INIT_RETRY_WAIT);
+		}
+	}
+
+	if (ret == 0) {
+		wondertap->state = WONDERTAP_STATE_UP;
+		wonder_info("Vendor init successful. State set to UP.\n");
+
+		if (_params->channel_hopping_enable &&
+			wondertap_ops->channel_schedule_request &&
+			wondertap->cached_channel_schedule.channel_list_len > 0) {
+			struct wondertap_capability caps;
+			u32 delta = 0;
+			u32 mac_tsf;
+
+			ret = wondertap_get_capabilities(wondertap, &caps);
+			if (ret) {
+				wonder_error(
+					"Failed to get capabilities for channel schedule\n");
+				goto out;
+			}
+
+			ret = wondertap_get_mac_tsf(wondertap, &mac_tsf);
+			if (ret) {
+				wonder_error("Failed to get TSF for channel schedule\n");
+				goto out;
+			}
+
+			wondertap->cached_channel_schedule.target_switch_time_tsf =
+				mac_tsf + caps.maximum_channel_switch_time_us + delta;
+			wondertap_ops->channel_schedule_request(
+				wondertap->vendor_handle,
+				&wondertap->cached_channel_schedule);
+			wonder_info("Applied cached channel schedule\n");
+		}
 	} else {
-		wonder_error("Vendor operation 'init' is not implemented\n");
-		ret = -EOPNOTSUPP;
+		wonder_error("Vendor init failed: %d\n", ret);
+		goto out;
 	}
 
 out:
@@ -154,6 +202,11 @@ void wondertap_deinit(struct wondertap_data *wondertap)
 	} else {
 		wonder_error("Vendor operation 'deinit' is not implemented\n");
 	}
+
+	kfree(wondertap->cached_channel_schedule.channel_list);
+	wondertap->cached_channel_schedule.channel_list = NULL;
+	wondertap->cached_channel_schedule.channel_list_len = 0;
+
 	wondertap->state = WONDERTAP_STATE_DOWN;
 	mutex_unlock(&wondertap->lock);
 }
@@ -268,6 +321,15 @@ int wondertap_set_reg(struct wondertap_data *wondertap, const char *country_code
 	return 0;
 }
 
+int wondertap_get_mac_tsf(struct wondertap_data *wondertap, u32 *mac_tsf)
+{
+	if (wondertap_ops && wondertap_ops->get_mac_tsf)
+		return wondertap_ops->get_mac_tsf(wondertap->vendor_handle, mac_tsf);
+
+	wonder_error("Vendor operation 'get_mac_tsf' is not implemented\n");
+	return -EOPNOTSUPP;
+}
+
 int wondertap_get_capabilities(struct wondertap_data *wondertap, struct wondertap_capability *features)
 {
 	if (wondertap_ops && wondertap_ops->get_capabilities) {
@@ -303,4 +365,151 @@ int wondertap_set_bssid_filter(struct wondertap_data *wondertap, const u8 *bssid
 	wonder_warn("Caching incoming BSSID filter settings.\n");
 	mutex_unlock(&wondertap->lock);
 	return 0;
+}
+
+int wondertap_channel_schedule_request(struct wondertap_data *wondertap,
+				       const struct channel_schedule_request *request)
+{
+	struct channel_schedule_request *cached_schedule = &wondertap->cached_channel_schedule;
+	int i;
+	int ret = 0;
+	size_t list_size = request->channel_list_len *
+			sizeof(struct wondertap_channel_list_params);
+
+	mutex_lock(&wondertap->lock);
+
+	if (cached_schedule->channel_list_len != request->channel_list_len) {
+		kfree(cached_schedule->channel_list);
+		cached_schedule->channel_list = NULL;
+
+		if (request->channel_list_len > 0) {
+			cached_schedule->channel_list = kmalloc(list_size, GFP_KERNEL);
+			if (!cached_schedule->channel_list) {
+				wonder_error("Failed to allocate memory for channel list\n");
+				cached_schedule->channel_list_len = 0;
+				ret = -ENOMEM;
+				goto out_unlock;
+			}
+		}
+	}
+
+	cached_schedule->channel_list_len = request->channel_list_len;
+	cached_schedule->next_channel_index = request->next_channel_index;
+	cached_schedule->dwell_time_tu = request->dwell_time_tu;
+	cached_schedule->target_switch_time_tsf =
+		request->target_switch_time_tsf;
+
+	if (request->channel_list && request->channel_list_len > 0)
+		memcpy(cached_schedule->channel_list, request->channel_list, list_size);
+
+	if (wondertap_is_up(wondertap)) {
+		if (request->channel_list_len > 0) {
+			if (wondertap_ops && wondertap_ops->channel_schedule_request) {
+				ret = wondertap_ops->channel_schedule_request(
+									wondertap->vendor_handle,
+									request);
+			} else {
+				wonder_error(
+					"Vendor ops 'channel_schedule_request' not implemented\n");
+				ret = -EOPNOTSUPP;
+			}
+		} else {
+			wonder_warn(
+				"Channel list is empty. Skip sending cached schedule to vendor\n");
+		}
+	} else {
+		wonder_warn("wondertap is inactive, caching incoming schedule settings.\n");
+	}
+
+	wonder_info("========== [ Channel Schedule Request ] ==========\n");
+	wonder_info("    List Len: %u\n", cached_schedule->channel_list_len);
+	wonder_info("    Next Idx: %u\n", cached_schedule->next_channel_index);
+	wonder_info("    Dwell TU: %u\n", cached_schedule->dwell_time_tu);
+	wonder_info("    Switch TSF: 0x%016x\n", cached_schedule->target_switch_time_tsf);
+
+	if (cached_schedule->channel_list) {
+		for (i = 0; i < cached_schedule->channel_list_len; i++) {
+			wonder_info("    Entry %d: [Freq: %u, BW: %u, Role: %u]\n",
+				    i, cached_schedule->channel_list[i].freq,
+				    cached_schedule->channel_list[i].bandwidth,
+				    cached_schedule->channel_list[i].role);
+		}
+	}
+	wonder_info("==================================================\n");
+
+out_unlock:
+	mutex_unlock(&wondertap->lock);
+	return ret;
+}
+
+int wondertap_get_channel_status_report(struct wondertap_data *wondertap,
+				    struct wondertap_channel_status_report *report)
+{
+	int ret = 0;
+	struct channel_schedule_request *cached_schedule = &wondertap->cached_channel_schedule;
+
+	mutex_lock(&wondertap->lock);
+
+	if (!wondertap_is_up(wondertap)) {
+		pr_warn("wondertap is inactive.\n");
+		ret = -ENODEV;
+		goto out_unlock;
+	}
+
+	if (!wondertap->wonder_ops || !wondertap->wonder_ops->get_channel_status_report) {
+		pr_warn("wondertap ops is not supported.\n");
+		ret = -EOPNOTSUPP;
+		goto out_unlock;
+	}
+
+	if (!wondertap->cap.bits.channel_hopping ||
+		!wondertap->init_params.channel_hopping_enable) {
+		pr_warn("channel hopping is not enabled.\n");
+		ret = -EOPNOTSUPP;
+		goto out_unlock;
+	}
+
+	if (report->channel_status_len != cached_schedule->channel_list_len) {
+		pr_warn("channel list len is not matched (%d, %d).\n",
+			report->channel_status_len, cached_schedule->channel_list_len);
+		ret = -EINVAL;
+		goto out_unlock;
+	}
+
+	ret = wondertap->wonder_ops->get_channel_status_report(wondertap->vendor_handle, report);
+
+	if (ret)
+		pr_err("Get channel status report failed %d.\n", ret);
+
+out_unlock:
+	mutex_unlock(&wondertap->lock);
+	return ret;
+}
+
+int wondertap_set_station_info(struct wondertap_data *wondertap,
+		const enum wondertap_station_action action,
+		struct wondertap_station_info *info)
+{
+	int ret = 0;
+
+	mutex_lock(&wondertap->lock);
+
+	if (!wondertap_is_up(wondertap)) {
+		pr_warn("wondertap is inactive.\n");
+		ret = -ENODEV;
+		goto out_unlock;
+	}
+
+	if (!wondertap->wonder_ops || !wondertap->wonder_ops->set_station_info) {
+		pr_warn("wondertap ops is not supported.\n");
+		ret = -EOPNOTSUPP;
+		goto out_unlock;
+	}
+
+	ret = wondertap->wonder_ops->set_station_info(
+		wondertap->vendor_handle, action, info);
+
+out_unlock:
+	mutex_unlock(&wondertap->lock);
+	return ret;
 }

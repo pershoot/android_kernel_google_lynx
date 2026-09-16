@@ -755,7 +755,7 @@ int setup_arg_pages(struct linux_binprm *bprm,
 		    unsigned long stack_top,
 		    int executable_stack)
 {
-	unsigned long ret;
+	int ret;
 	unsigned long stack_shift;
 	struct mm_struct *mm = current->mm;
 	struct vm_area_struct *vma = bprm->vma;
@@ -1324,7 +1324,8 @@ int begin_new_exec(struct linux_binprm * bprm)
 	 * dma_buf_begin_new_exec) for the new mm_struct.
 	 */
 	if (IS_ENABLED(CONFIG_DMA_SHARED_BUFFER)) {
-		refcount_inc(&current->dmabuf_info->refcnt);
+		if (current->dmabuf_info)
+			get_dmabuf_info(current->dmabuf_info);
 		me->mm->abi_extend->dmabuf_info = current->dmabuf_info;
 	}
 

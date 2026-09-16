@@ -933,7 +933,9 @@ struct p9221_charger_data {
 	struct delayed_work		set_rf_work;
 	struct delayed_work		presence_check_work;
 	struct delayed_work		icl_stable_work;
-	struct work_struct		uevent_work;
+	struct work_struct		wlc_uevent_work;
+	struct work_struct		fan_uevent_work;
+	struct work_struct		rtx_uevent_work;
 	struct work_struct		calibration_work;
 	struct work_struct		rtx_disable_work;
 	struct work_struct		rtx_reset_work;

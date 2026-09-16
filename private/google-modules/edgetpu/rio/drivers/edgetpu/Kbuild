@@ -24,7 +24,8 @@ obj-$(CONFIG_RIO)	+= rio.o
 
 GCIP_DIR=gcip-kernel-driver/drivers/gcip
 
-edgetpu-objs	:= edgetpu-dmabuf.o \
+edgetpu-objs	:= \
+		   edgetpu-dmabuf.o \
 		   edgetpu-firmware-util.o \
 		   edgetpu-iif.o \
 		   edgetpu-ikv-additional-info.o \
@@ -74,6 +75,8 @@ CFLAGS_rio-pm.o := -DCONFIG_RIO=1
 CFLAGS_rio-soc.o := -DCONFIG_RIO=1
 CFLAGS_rio-usage-stats.o := -DCONFIG_RIO=1
 CFLAGS_rio-vii-packet.o := -DCONFIG_RIO=1
+
+
 
 
 

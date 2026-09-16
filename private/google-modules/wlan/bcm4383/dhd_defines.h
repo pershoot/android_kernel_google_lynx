@@ -320,6 +320,13 @@
 		#define WL_CFG80211_MONITOR
 		/* Active Radio tap */
 		#define DHD_ART
+		#if IS_ENABLED(CONFIG_SOC_MBU) || IS_ENABLED(CONFIG_BCM4383)
+			#define WONDERTAP
+		#endif
+		/* Undef WONDERTAP if wonder SDK dir is absent as per Kbuild */
+		#ifdef FORCE_DISABLE_WONDERTAP
+			#undef WONDERTAP
+		#endif
 	#endif
 	/* Not enabled for the platform due to overhead */
 	#if !(IS_ENABLED(CONFIG_ARCH_BRCMSTB) || IS_ENABLED(CONFIG_SYNAPTICS_SOC))
@@ -525,7 +532,7 @@
 		#if IS_ENABLED(CONFIG_SOC_LGA)
 			#if defined(BCMDHD) && (BCMDHD == 4383)
 				#define DHD_TREAT_D2H_CTO_AS_LINKDOWN
-				#define DHD_ENABLE_L1SS_FROM_PM_COMPLETE
+				#define DHD_DEFER_L1SS_ENABLE_IN_RESUME
 			#endif
 		#endif
 		/* Skip xorcsum for high throughput case */
