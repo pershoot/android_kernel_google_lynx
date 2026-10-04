@@ -703,3 +703,9 @@ test_suite(
 define_partition_size_setting()
 define_props_flags()
 define_avb_flags()
+
+string_flag(
+    name = "kbuild_timestamp",
+    build_setting_default = "",
+    visibility = ["//visibility:public"],
+)

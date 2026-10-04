@@ -132,6 +132,41 @@ def _get_make_goals_deprecation_warning(ctx):
     return msg
 
 def _kernel_env_impl(ctx):
+    kbuild_timestamp_cmd = ""
+    kbuild_timestamp_wrapper = ""
+    if ctx.attr._kbuild_timestamp[BuildSettingInfo].value:
+        kbuild_timestamp_cmd = "export KBUILD_BUILD_TIMESTAMP=\"%s\"" % ctx.attr._kbuild_timestamp[BuildSettingInfo].value
+        kbuild_timestamp_wrapper = """
+          cat << 'EOF_WRAPPER' >> {out}
+export ORIG_DATE=$(PATH=$(echo "$PATH" | sed -e "s|${{OUT_DIR}}/.bin:||g") command -v date)
+mkdir -p ${{OUT_DIR}}/.bin
+cat << 'END_DATE' > ${{OUT_DIR}}/.bin/date
+#!/bin/sh
+# Intercept date -d "<string>" +%s to natively parse complex strings for Toybox
+if [ "$1" = "-d" ] && [ "$3" = "+%s" ]; then
+    parsed=$(python3 -c "import sys, email.utils; t = email.utils.parsedate_tz(sys.argv[1]); print(int(email.utils.mktime_tz(t))) if t else sys.exit(1)" "$2" 2>/dev/null)
+    if [ $? -eq 0 ]; then
+        echo "$parsed"
+        exit 0
+    fi
+fi
+
+out=$(${{ORIG_DATE}} "$@" 2>&1)
+ret=$?
+if [ $ret -ne 0 ]; then
+    case "$out" in
+        *"bad date"*) ;;
+        *) echo "$out" >&2 ;;
+    esac
+    exit $ret
+fi
+echo "$out"
+END_DATE
+chmod +x ${{OUT_DIR}}/.bin/date
+export PATH="${{OUT_DIR}}/.bin:$PATH"
+EOF_WRAPPER
+"""
+
     srcs = [
         s
         for s in ctx.files.srcs
@@ -236,6 +271,7 @@ def _kernel_env_impl(ctx):
           export BUILD_CONFIG={build_config}
           {set_localversion_cmd}
           source {setup_env}
+          {kbuild_timestamp_cmd}
           {check_arch_cmd}
         # Variables from resolved toolchain
           {toolchains_setup_env_var_cmd}
@@ -247,12 +283,15 @@ def _kernel_env_impl(ctx):
           echo >> {out}
         # capture it as a file to be sourced in downstream rules
           {preserve_env} >> {out}
+          {kbuild_timestamp_wrapper}
         """.format(
         build_utils_sh = ctx.file._build_utils_sh.path,
         build_config = build_config.path,
         set_localversion_cmd = stamp.set_localversion_cmd(ctx),
         setup_env = setup_env.path,
         check_arch_cmd = _get_check_arch_cmd(ctx),
+        kbuild_timestamp_cmd = kbuild_timestamp_cmd,
+        kbuild_timestamp_wrapper = kbuild_timestamp_wrapper,
         toolchains_setup_env_var_cmd = toolchains.setup_env_var_cmd,
         make_goals_deprecation_warning = make_goals_deprecation_warning,
         preserve_env = preserve_env.path,
@@ -485,6 +524,7 @@ kernel_env = rule(
             allow_single_file = True,
             doc = "label referring to the main build config",
         ),
+        "_kbuild_timestamp": attr.label(default = "//build/kernel/kleaf:kbuild_timestamp"),
         "srcs": attr.label_list(
             mandatory = True,
             allow_files = True,
