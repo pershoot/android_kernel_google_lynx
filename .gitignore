@@ -1,1 +1,4 @@
 prebuilts/
+common/*.tar*
+common/ack/
+common/gki/
