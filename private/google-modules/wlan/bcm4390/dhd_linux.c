@@ -6177,6 +6177,7 @@ dhd_add_monitor_if(dhd_info_t *dhd)
 	dev->ieee80211_ptr = wdev;
 	SET_NETDEV_DEV(dev, wiphy_dev(wdev->wiphy));
 	wdev->netdev = dev;
+	DHD_PRINT(("ADD: dev=%p wdev=%p\n", dev, dev->ieee80211_ptr));
 #endif /* DHD_ART */
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 9))
@@ -8262,8 +8263,8 @@ dhd_get_static_ifp_by_ndev(dhd_pub_t *dhdp, struct net_device *ndev)
 	while (ifidx < DHD_MAX_STATIC_IFS) {
 		ifp = dhdinfo->static_iflist[ifidx];
 		if (ifp && (ifp->net == ndev)) {
-			DHD_TRACE(("match found for %s in static_iflist ifidx:%d\n",
-				ndev->name, ifidx));
+			DHD_PRINT(("match found for %s in static_iflist ifidx:%d, net:%p\n",
+				ndev->name, ifidx, ifp->net));
 			return ifp;
 		}
 		ifidx++;
@@ -8565,7 +8566,8 @@ dhd_allocate_static_if(dhd_pub_t *dhdpub, const char *name,
 
 	ifp->static_if = TRUE;
 	dhdinfo->static_iflist[static_idx] = ifp;
-	DHD_PRINT(("%s: updated ifp @ static_iflist index:%d\n", __FUNCTION__, static_idx));
+	DHD_PRINT(("%s: updated ifp @ static_iflist index:%d, net:%p\n",
+		__FUNCTION__, static_idx, ifp->net));
 	return ifp->net;
 }
 
@@ -15522,8 +15524,9 @@ _dhd_register_if(dhd_pub_t *dhdp, int ifidx, bool need_rtnl_lock, dhd_if_t *ifp)
 	unsigned long flags;
 	bool radiotap_if = FALSE;
 
-	DHD_PRINT(("%s: enter ifidx:%d\n", __FUNCTION__, ifidx));
 	net = ifp->net;
+	DHD_PRINT(("%s: enter ifidx:%d, net=%p, name:%s, ieee80211_ptr:%p\n",
+		__FUNCTION__, ifidx, net, net->name, net->ieee80211_ptr));
 
 	ASSERT(net && (ifp->idx == ifidx));
 	if (!net->netdev_ops) {
@@ -15946,6 +15949,11 @@ void dhd_detach(dhd_pub_t *dhdp)
 		dhd_os_dbg_detach(dhdp);
 	}
 
+/* Delete monitor interface before the static-IF loop and wlan0 unregister */
+#ifdef WL_MONITOR
+	dhd_del_monitor_if(dhd);
+#endif /* WL_MONITOR */
+
 	/* delete all interfaces, start with virtual  */
 	if (dhd->dhd_state & DHD_ATTACH_STATE_ADD_IF) {
 		int i = 1;
@@ -16236,9 +16244,6 @@ void dhd_detach(dhd_pub_t *dhdp)
 	/* memory waste feature list initilization */
 	dhd_mw_list_delete(dhdp, &(dhdp->mw_list_head));
 #endif /* DHD_DEBUG */
-#ifdef WL_MONITOR
-	dhd_del_monitor_if(dhd);
-#endif /* WL_MONITOR */
 #ifdef DHD_LOGGER
 	if ((dhd_logger == TRUE) && (dhdp->logger)) {
 		/* detach dhd logger interface */

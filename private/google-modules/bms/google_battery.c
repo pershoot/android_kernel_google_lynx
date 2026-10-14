@@ -5080,29 +5080,6 @@ static int bhi_cycle_count_index(const struct health_data *health_data)
 	return cc_index;
 }
 
-static bool bhi_algo_has_grace(int algo)
-{
-	return algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B ||
-	       algo == BHI_ALGO_ACHI_CARETAKER || algo == BHI_ALGO_ACHI_SEC ||
-	       algo == BHI_ALGO_ACHI_MIX;
-}
-
-static bool bhi_algo_under_grace(int algo, const struct health_data *data)
-{
-	const int cycle_count = data->bhi_data.cycle_count;
-	const int l_bound = bhi_get_capacity_bound(cycle_count,
-						   &data->bhi_data.lower_bound.limit[0]);
-
-	if (!bhi_algo_has_grace(algo))
-		return false;
-
-	if ((l_bound == 0 || l_bound == data->bhi_data.pack_capacity)
-	    && data->bhi_cycle_grace && cycle_count < data->bhi_cycle_grace)
-		return true;
-
-	return false;
-}
-
 static int bhi_calc_health_index(int algo, struct health_data *health_data,
 				 int cap_index, int imp_index, int sd_index)
 {
@@ -5113,9 +5090,6 @@ static int bhi_calc_health_index(int algo, struct health_data *health_data,
 
 	if (health_data->bhi_debug_health_index)
 		return health_data->bhi_debug_health_index;
-
-	if (bhi_algo_under_grace(algo, health_data))
-		return BHI_ALGO_FULL_HEALTH;
 
 	switch (algo) {
 	case BHI_ALGO_DISABLED:
@@ -5168,6 +5142,14 @@ static int bhi_calc_health_index(int algo, struct health_data *health_data,
 	return index;
 }
 
+static bool bhi_algo_has_grace(int algo)
+{
+	return algo == BHI_ALGO_ACHI_B || algo == BHI_ALGO_ACHI_RAVG_B ||
+	       algo == BHI_ALGO_ACHI_CARETAKER || algo == BHI_ALGO_ACHI_SEC ||
+	       algo == BHI_ALGO_ACHI_MIX;
+
+}
+
 static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 					      const struct health_data *data)
 {
@@ -5179,8 +5161,14 @@ static enum bhi_status bhi_calc_health_status(int algo, int health_index,
 	if (algo == BHI_ALGO_DISABLED)
 		return BH_UNKNOWN;
 
-	if (bhi_algo_under_grace(algo, data))
-		return BH_NOT_AVAILABLE;
+	if (bhi_algo_has_grace(algo)) {
+		const int cycle_count = data->bhi_data.cycle_count;
+		const int l_bound = bhi_get_capacity_bound(cycle_count,
+							   &data->bhi_data.lower_bound.limit[0]);
+
+		if (l_bound == 0 && data->bhi_cycle_grace && cycle_count < data->bhi_cycle_grace)
+			return BH_NOT_AVAILABLE;
+	}
 
 	if (data->cal_state == REC_STATE_SCHEDULED)
 		return BH_INCONSISTENT;
@@ -14150,15 +14138,8 @@ static int batt_bhi_init(struct batt_drv *batt_drv)
 		memcpy(&bhi_data->lower_bound.limit[0], capacity_boundary,
 		       sizeof(capacity_boundary));
 	} else {
-		int cap = bhi_data->pack_capacity;
-		int grace_limit = health_data->bhi_cycle_grace / 100;
-
-		for (i = 0; i < BHI_TREND_POINTS_SIZE; i++) {
-			if (i < grace_limit)
-				bhi_data->lower_bound.limit[i] = cap;
-			else
-				bhi_data->lower_bound.limit[i] = cap * 60 / 100;
-		}
+		for (i = 0; i < BHI_TREND_POINTS_SIZE; i++)
+			bhi_data->lower_bound.limit[i] = bhi_data->pack_capacity * 60 / 100;
 	}
 	dev_info(batt_drv->device, "bhi_l_bound [%d, %d, %d, %d, %d, %d, %d, %d, %d, %d]\n",
 		 bhi_data->lower_bound.limit[0], bhi_data->lower_bound.limit[1],

@@ -7277,6 +7277,8 @@ wl_add_keyext(struct wiphy *wiphy, struct net_device *dev,
 			err = -EINVAL;
 			goto exit;
 		}
+		/* mark primary key flag to ensure key_idx is updated after plumbing key */
+		key.flags |= WL_PRIMARY_KEY;
 		swap_key_from_BE(&key);
 #if defined(BCMDONGLEHOST)
 		/* need to guarantee EAPOL 4/4 send out before set key */
@@ -7589,6 +7591,10 @@ wl_cfg80211_add_key(struct wiphy *wiphy, struct net_device *dev,
 		key.iv_initialized = true;
 	}
 
+	/* mark primary key flag to ensure key_idx is updated after plumbing key */
+	if (!IS_CIPHER_WEP(params->cipher)) {
+		key.flags |= WL_PRIMARY_KEY;
+	}
 	err = wldev_iovar_setbuf_bsscfg(dev, "wsec_key", &key, sizeof(key), iov_buf,
 		WLC_IOCTL_SMLEN, bssidx, NULL);
 	if (unlikely(err)) {

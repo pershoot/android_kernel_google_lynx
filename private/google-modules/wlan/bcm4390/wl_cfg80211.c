@@ -6345,17 +6345,7 @@ wl_cfg80211_get_mlo_link_status(struct bcm_cfg80211 *cfg, struct net_device *dev
 		WL_INFORM_MEM(("[MLO] num of links:%d mld_addr:" MACDBG "\n",
 				num_links, MAC2STRDBG(mst_resp->mld_addr.octet)));
 	} else {
-		/* Skip memset during roaming as num_links may return as 0. The
-		 * bssidx, cfgidx values are available only during WLC_E_MLO_LINK_INFO
-		 * context. so memset can't be done unconditionally.
-		 */
-		if (!wl_get_drv_status(cfg, ROAMING, dev)) {
-			WL_INFORM_MEM(("[MLO] num_links:0, clear any stale data\n"));
-			(void)memset_s(&netinfo->mlinfo, sizeof(wl_mlo_link_info_t), 0,
-					sizeof(wl_mlo_link_info_t));
-		} else {
-			WL_INFORM_MEM(("[MLO] num_links:0 during ROAMING, skip clearing data\n"));
-		}
+		WL_INFORM_MEM(("non-ml connection\n"));
 	}
 
 	mst_link = (wl_mlo_link_status_v2_t *)&mst_resp->link_status[0];
@@ -16865,7 +16855,8 @@ wl_fillup_conn_resp_params(struct bcm_cfg80211 *cfg, struct net_device *ndev,
 		}
 
 		if (resp_params->valid_links) {
-			if (IS_INVALID_CONN_ADDR(mld_netinfo->mlinfo.peer_mld_addr)) {
+			if ((resp_params->status == WLAN_STATUS_SUCCESS) &&
+					IS_INVALID_CONN_ADDR(mld_netinfo->mlinfo.peer_mld_addr)) {
 				WL_INFORM_MEM(("invalid ap_mld_addr:" MACDBG ". force failure\n",
 					MAC2STRDBG((mld_netinfo->mlinfo.peer_mld_addr))));
 				resp_params->status = WLAN_STATUS_UNSPECIFIED_FAILURE;
@@ -16879,7 +16870,8 @@ wl_fillup_conn_resp_params(struct bcm_cfg80211 *cfg, struct net_device *ndev,
 	} else {
 		resp_params->links[0].addr = ndev->dev_addr;
 		resp_params->links[0].bssid = curbssid;
-		if (IS_INVALID_CONN_ADDR(curbssid)) {
+		if ((resp_params->status == WLAN_STATUS_SUCCESS) &&
+				(IS_INVALID_CONN_ADDR(curbssid))) {
 			WL_INFORM_MEM(("invalid bssid:" MACDBG ". force failure\n",
 				MAC2STRDBG(curbssid)));
 			resp_params->status = WLAN_STATUS_UNSPECIFIED_FAILURE;
@@ -17102,9 +17094,10 @@ wl_bss_connect_done(struct bcm_cfg80211 *cfg, struct net_device *ndev,
 			"connection succeeded\n", ndev->name));
 
 	} else {
-		WL_INFORM_MEM(("[%s] Report connection failure. status:%d "
-			"auth_assoc_stat:%d cfg80211_status:%d\n", ndev->name,
-			status, sec->auth_assoc_res_status,  sec->cfg80211_assoc_status));
+		WL_INFORM_MEM(("[%s] Report connection failure. resp_status:%d "
+			"auth_assoc_stat:%d cfg80211_status:%d timeout_status:%d\n",
+			ndev->name, resp_params.status, sec->auth_assoc_res_status,
+			sec->cfg80211_assoc_status, resp_params.timeout_reason));
 	}
 
 exit:
@@ -26429,6 +26422,12 @@ wl_cfg80211_handle_set_ssid_complete(struct bcm_cfg80211 *cfg, wl_assoc_status_t
 #ifdef DHD_ENABLE_BIGDATA_LOGGING
 		wl_get_connect_failed_status(cfg, event);
 #endif /* DHD_ENABLE_BIGDATA_LOGGING */
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
+		if (as->status == WLC_E_STATUS_NO_NETWORKS) {
+			wl_cfgvif_update_assoc_fail_status(cfg, as->ndev, event);
+		}
+#endif /* LINUX_VER >= 5.4 */
 
 		if (sec && sec->auth_assoc_res_status) {
 			WL_INFORM_MEM(("Assoc fail status %d\n",

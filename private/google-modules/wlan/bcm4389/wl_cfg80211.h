@@ -3132,6 +3132,8 @@ wl_iftype_to_str(int wl_iftype)
 
 #define IS_AKM_SUITE_SAE_FT(sec) (sec->wpa_auth == WLAN_AKM_SUITE_FT_OVER_SAE)
 #define IS_AKM_SUITE_CCKM(sec) ({BCM_REFERENCE(sec); FALSE;})
+#define IS_CIPHER_WEP(cipher) (cipher == WLAN_CIPHER_SUITE_WEP40) || \
+				(cipher == WLAN_CIPHER_SUITE_WEP104)
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0))
 #define STA_INFO_BIT(info) (1ul << NL80211_STA_ ## info)
