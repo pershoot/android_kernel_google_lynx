@@ -3272,7 +3272,7 @@ static int cnss_pci_resume(struct device *dev)
 	if (!pci_priv->disable_pc) {
 		ret = cnss_pci_resume_bus(pci_priv);
 		if (ret)
-			goto out;
+			cnss_pr_err("Failed to resume bus, err = %d\n", ret);
 	}
 
 	ret = cnss_pci_resume_driver(pci_priv);
