@@ -5738,6 +5738,8 @@ static int cnss_pci_probe(struct pci_dev *pci_dev,
 		goto out;
 	}
 
+	device_disable_async_suspend(dev);
+
 	pci_priv->pci_link_state = PCI_LINK_UP;
 	pci_priv->plat_priv = plat_priv;
 	pci_priv->pci_dev = pci_dev;

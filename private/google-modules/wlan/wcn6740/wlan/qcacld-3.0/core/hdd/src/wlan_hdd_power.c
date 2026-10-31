@@ -1679,6 +1679,8 @@ hdd_suspend_wlan(void)
 		wlan_hdd_netif_queue_control(adapter,
 					     WLAN_STOP_ALL_NETIF_QUEUE,
 					     WLAN_CONTROL_PATH);
+		if (adapter->dev)
+			netif_device_detach(adapter->dev);
 
 		if (adapter->device_mode == QDF_STA_MODE)
 			status = hdd_enable_default_pkt_filters(adapter);
@@ -1744,6 +1746,8 @@ static int hdd_resume_wlan(void)
 		/* wake the tx queues */
 		hdd_debug("Enabling queues for dev mode %s",
 			  qdf_opmode_str(adapter->device_mode));
+		if (adapter->dev)
+			netif_device_attach(adapter->dev);
 		wlan_hdd_netif_queue_control(adapter,
 					WLAN_WAKE_ALL_NETIF_QUEUE,
 					WLAN_CONTROL_PATH);

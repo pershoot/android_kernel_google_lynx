@@ -19115,6 +19115,8 @@ int wlan_hdd_cfg80211_register(struct wiphy *wiphy)
 		return -EIO;
 	}
 
+	device_disable_async_suspend(&wiphy->dev);
+
 	hdd_exit();
 	return 0;
 }
