@@ -3165,6 +3165,8 @@ int cnss_pci_resume_bus(struct cnss_pci_data *pci_priv)
 	if (pci_priv->pci_link_state == PCI_LINK_UP)
 		goto out;
 
+	usleep_range(20000, 21000);
+
 	if (cnss_set_pci_link(pci_priv, PCI_LINK_UP)) {
 		cnss_fatal_err("Failed to resume PCI link from suspend\n");
 		cnss_pci_link_down(&pci_dev->dev);
@@ -3271,8 +3273,12 @@ static int cnss_pci_resume(struct device *dev)
 
 	if (!pci_priv->disable_pc) {
 		ret = cnss_pci_resume_bus(pci_priv);
-		if (ret)
+		if (ret) {
+			cnss_pr_err("Failed to resume bus, err = %d\n", ret);
+			pci_priv->drv_connected_last = 0;
+			clear_bit(CNSS_IN_SUSPEND_RESUME, &plat_priv->driver_state);
 			goto out;
+		}
 	}
 
 	ret = cnss_pci_resume_driver(pci_priv);
@@ -5737,6 +5743,8 @@ static int cnss_pci_probe(struct pci_dev *pci_dev,
 		ret = -ENOMEM;
 		goto out;
 	}
+
+	device_disable_async_suspend(dev);
 
 	pci_priv->pci_link_state = PCI_LINK_UP;
 	pci_priv->plat_priv = plat_priv;
