@@ -1679,6 +1679,8 @@ hdd_suspend_wlan(void)
 		wlan_hdd_netif_queue_control(adapter,
 					     WLAN_STOP_ALL_NETIF_QUEUE,
 					     WLAN_CONTROL_PATH);
+		if (adapter->dev)
+			netif_device_detach(adapter->dev);
 
 		if (adapter->device_mode == QDF_STA_MODE)
 			status = hdd_enable_default_pkt_filters(adapter);
@@ -1744,6 +1746,8 @@ static int hdd_resume_wlan(void)
 		/* wake the tx queues */
 		hdd_debug("Enabling queues for dev mode %s",
 			  qdf_opmode_str(adapter->device_mode));
+		if (adapter->dev)
+			netif_device_attach(adapter->dev);
 		wlan_hdd_netif_queue_control(adapter,
 					WLAN_WAKE_ALL_NETIF_QUEUE,
 					WLAN_CONTROL_PATH);
@@ -2291,13 +2295,23 @@ static int __wlan_hdd_cfg80211_resume_wlan(struct wiphy *wiphy)
 	QDF_STATUS status = QDF_STATUS_SUCCESS;
 	struct hdd_adapter *adapter;
 	struct wlan_objmgr_vdev *vdev;
-	int exit_code;
 
 	hdd_enter();
 
+	/* Resume control path scheduler and RX threads first */
+	if (hdd_ctx->is_scheduler_suspended) {
+		scheduler_resume();
+		hdd_ctx->is_scheduler_suspended = false;
+	}
+
+	if (hdd_ctx->enable_rxthread)
+		wlan_hdd_rx_thread_resume(hdd_ctx);
+
+	if (hdd_ctx->enable_dp_rx_threads)
+		dp_txrx_resume(cds_get_context(QDF_MODULE_ID_SOC));
+
 	if (cds_is_driver_recovering()) {
 		hdd_debug("Driver is recovering; Skipping resume");
-		exit_code = 0;
 		goto exit_with_code;
 	}
 
@@ -2305,50 +2319,33 @@ static int __wlan_hdd_cfg80211_resume_wlan(struct wiphy *wiphy)
 	    QDF_GLOBAL_MONITOR_MODE == hdd_get_conparam()) {
 		hdd_err("Command not allowed in mode %d",
 			hdd_get_conparam());
-		exit_code = -EINVAL;
 		goto exit_with_code;
 	}
 
 	if (ucfg_pmo_get_suspend_mode(hdd_ctx->psoc) == PMO_SUSPEND_NONE) {
 		hdd_info_rl("Suspend is not supported");
-		return -EINVAL;
+		goto exit_with_code;
 	}
 
 	if (wlan_hdd_is_full_power_down_enable(hdd_ctx)) {
 		hdd_debug("Driver has been re-initialized; Skipping resume");
-		exit_code = 0;
 		goto exit_with_code;
 	}
 
 	if (hdd_ctx->driver_status != DRIVER_MODULES_ENABLED) {
 		hdd_debug("Driver is not enabled; Skipping resume");
-		exit_code = 0;
 		goto exit_with_code;
 	}
 
-	status = hdd_resume_wlan();
-	if (status != QDF_STATUS_SUCCESS) {
-		exit_code = 0;
-		goto exit_with_code;
-	}
-	/* Resume control path scheduler */
-	if (hdd_ctx->is_scheduler_suspended) {
-		scheduler_resume();
-		hdd_ctx->is_scheduler_suspended = false;
-	}
 	/* Resume all components registered to pmo */
 	status = ucfg_pmo_resume_all_components(hdd_ctx->psoc,
 						QDF_SYSTEM_SUSPEND);
-	if (status != QDF_STATUS_SUCCESS) {
-		exit_code = 0;
-		goto exit_with_code;
-	}
-	/* Resume tlshim Rx thread */
-	if (hdd_ctx->enable_rxthread)
-		wlan_hdd_rx_thread_resume(hdd_ctx);
+	if (status != QDF_STATUS_SUCCESS)
+		hdd_err("Failed ucfg_pmo_resume_all_components: %d", status);
 
-	if (hdd_ctx->enable_dp_rx_threads)
-		dp_txrx_resume(cds_get_context(QDF_MODULE_ID_SOC));
+	status = hdd_resume_wlan();
+	if (status != QDF_STATUS_SUCCESS)
+		hdd_err("Failed hdd_resume_wlan: %d", status);
 
 	if (ucfg_pkt_capture_get_mode(hdd_ctx->psoc) !=
 						PACKET_CAPTURE_MODE_DISABLE) {
@@ -2372,14 +2369,11 @@ static int __wlan_hdd_cfg80211_resume_wlan(struct wiphy *wiphy)
 		   TRACE_CODE_HDD_CFG80211_RESUME_WLAN,
 		   NO_SESSION, hdd_ctx->is_wiphy_suspended);
 
-	hdd_ctx->is_wiphy_suspended = false;
-
-	hdd_ctx->suspend_resume_stats.resumes++;
-	exit_code = 0;
-
 exit_with_code:
+	hdd_ctx->is_wiphy_suspended = false;
+	hdd_ctx->suspend_resume_stats.resumes++;
 	hdd_exit();
-	return exit_code;
+	return 0;
 }
 
 static int _wlan_hdd_cfg80211_resume_wlan(struct wiphy *wiphy)
@@ -2394,7 +2388,7 @@ static int _wlan_hdd_cfg80211_resume_wlan(struct wiphy *wiphy)
 
 	if (!hdd_ctx) {
 		hdd_err_rl("hdd context is null");
-		return -ENODEV;
+		return 0;
 	}
 
 	/* If Wifi is off, return success for system resume */
@@ -2404,11 +2398,19 @@ static int _wlan_hdd_cfg80211_resume_wlan(struct wiphy *wiphy)
 	}
 
 	errno = wlan_hdd_validate_context(hdd_ctx);
-	if (errno)
-		return errno;
+	if (errno) {
+		if (hdd_ctx->is_scheduler_suspended) {
+			scheduler_resume();
+			hdd_ctx->is_scheduler_suspended = false;
+		}
+		if (hdd_ctx->enable_rxthread)
+			wlan_hdd_rx_thread_resume(hdd_ctx);
+		if (hdd_ctx->enable_dp_rx_threads)
+			dp_txrx_resume(cds_get_context(QDF_MODULE_ID_SOC));
+		return 0;
+	}
 
-
-	errno = __wlan_hdd_cfg80211_resume_wlan(wiphy);
+	__wlan_hdd_cfg80211_resume_wlan(wiphy);
 
 	/* It may happen during cfg80211 suspend this timer is stopped.
 	 * This means that if
@@ -2423,23 +2425,24 @@ static int _wlan_hdd_cfg80211_resume_wlan(struct wiphy *wiphy)
 	    hdd_ctx->driver_status == DRIVER_MODULES_ENABLED)
 		hdd_psoc_idle_timer_start(hdd_ctx);
 
-	return errno;
+	return 0;
 }
 
 int wlan_hdd_cfg80211_resume_wlan(struct wiphy *wiphy)
 {
-	struct osif_psoc_sync *psoc_sync;
+	struct osif_psoc_sync *psoc_sync = NULL;
 	int errno;
 
 	errno = osif_psoc_sync_op_start(wiphy_dev(wiphy), &psoc_sync);
 	if (errno)
-		return errno;
+		hdd_err("osif_psoc_sync_op_start failed: %d", errno);
 
-	errno = _wlan_hdd_cfg80211_resume_wlan(wiphy);
+	_wlan_hdd_cfg80211_resume_wlan(wiphy);
 
-	osif_psoc_sync_op_stop(psoc_sync);
+	if (psoc_sync)
+		osif_psoc_sync_op_stop(psoc_sync);
 
-	return errno;
+	return 0;
 }
 
 static void hdd_suspend_cb(void)

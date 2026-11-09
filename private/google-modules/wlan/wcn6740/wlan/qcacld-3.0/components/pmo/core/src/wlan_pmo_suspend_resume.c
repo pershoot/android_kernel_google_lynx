@@ -887,6 +887,9 @@ pmo_core_enable_wow_in_fw(struct wlan_objmgr_psoc *psoc,
 	pmo_core_update_wow_enable_cmd_sent(psoc_ctx, true);
 
 out:
+	if (QDF_IS_STATUS_ERROR(status))
+		psoc_ctx->wow.wow_state = pmo_wow_state_none;
+
 	pmo_exit();
 
 	return status;

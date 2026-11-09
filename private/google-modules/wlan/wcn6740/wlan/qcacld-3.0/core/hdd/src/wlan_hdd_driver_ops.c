@@ -23,6 +23,8 @@
 #include "qdf_status.h"
 #include "qdf_lock.h"
 #include "cds_sched.h"
+#include "scheduler_api.h"
+#include <dp_txrx.h>
 #include "osdep.h"
 #include "hif.h"
 #include "htc.h"
@@ -1448,6 +1450,21 @@ int wlan_hdd_bus_resume(enum qdf_suspend_type type)
 		return -EINVAL;
 
 	/*
+	 * Resume scheduler and RX threads early if suspended to ensure
+	 * incoming firmware events and completions can be processed.
+	 */
+	if (hdd_ctx->is_scheduler_suspended) {
+		scheduler_resume();
+		hdd_ctx->is_scheduler_suspended = false;
+	}
+
+	if (hdd_ctx->enable_rxthread)
+		wlan_hdd_rx_thread_resume(hdd_ctx);
+
+	if (hdd_ctx->enable_dp_rx_threads)
+		dp_txrx_resume(cds_get_context(QDF_MODULE_ID_SOC));
+
+	/*
 	 * Add bus votes at the beginning, before making sure there are any
 	 * bus transactions from WLAN SOC for TX/RX.
 	 */
@@ -1502,8 +1519,6 @@ out:
 	if (cds_is_driver_recovering() || cds_is_driver_in_bad_state() ||
 		cds_is_fw_down())
 		return 0;
-
-	QDF_BUG(false);
 
 	return status;
 }
