@@ -582,15 +582,25 @@ int mfc_core_set_dynamic_dpb(struct mfc_core *core, struct mfc_ctx *ctx,
 void mfc_core_get_img_size(struct mfc_core *core, struct mfc_ctx *ctx,
 		enum mfc_get_img_size img_size)
 {
+	struct mfc_core_ctx *core_ctx = core->core_ctx[ctx->num];
 	struct mfc_dec *dec = ctx->dec_priv;
 	unsigned int w, h;
+	unsigned int new_w, new_h;
 	int i;
 
 	w = ctx->img_width;
 	h = ctx->img_height;
 
-	ctx->img_width = mfc_core_get_img_width();
-	ctx->img_height = mfc_core_get_img_height();
+	new_w = mfc_core_get_img_width();
+	new_h = mfc_core_get_img_height();
+	if (mfc_check_dec_resolution(ctx, new_w, new_h)) {
+		mfc_ctx_err("[DRC] unsupported resolution from F/W, %dx%d\n", new_w, new_h);
+		mfc_change_state(core_ctx, MFCINST_ERROR);
+		return;
+	}
+
+	ctx->img_width = new_w;
+	ctx->img_height = new_h;
 	ctx->crop_width = ctx->img_width;
 	ctx->crop_height = ctx->img_height;
 

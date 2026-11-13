@@ -60,7 +60,7 @@ def _parse_env(repository_ctx, var_name, expected_key):
             return value
     return None
 
-_ARTIFACT_URL_FMT = "https://androidbuildinternal.googleapis.com/android/internal/build/v3/builds/{build_number}/{target}/attempts/latest/artifacts/{filename}/url?redirect=true"
+_ARTIFACT_URL_FMT = "https://ci.android.com/builds/submitted/{build_number}/{target}/latest/raw/{filename}"
 
 def _download_artifact_repo_impl(repository_ctx):
     workspace_file = """workspace(name = "{}")

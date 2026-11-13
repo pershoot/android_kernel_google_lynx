@@ -21,25 +21,8 @@
 
 #include <linux/atomic.h>
 #include <linux/list.h>
-#include <linux/slab.h>
 #include <mali_kbase_fence.h>
 #include <mali_kbase.h>
-
-struct kbase_fence_meta_put_defer {
-	struct rcu_head rcu;
-	struct kbase_kcpu_dma_fence_meta *metadata;
-	struct module *module;
-};
-
-static void kbase_fence_meta_put_deferred(struct rcu_head *rcu)
-{
-	struct kbase_fence_meta_put_defer *meta_defer =
-		container_of(rcu, struct kbase_fence_meta_put_defer, rcu);
-
-	kbase_kcpu_dma_fence_meta_put(meta_defer->metadata);
-	module_put(meta_defer->module);
-	kfree(meta_defer);
-}
 
 static const char *kbase_fence_get_driver_name(struct dma_fence *fence)
 {
@@ -51,13 +34,8 @@ static const char *kbase_fence_get_driver_name(struct dma_fence *fence)
 static const char *kbase_fence_get_timeline_name(struct dma_fence *fence)
 {
 	struct kbase_kcpu_dma_fence *kcpu_fence = (struct kbase_kcpu_dma_fence *)fence;
-	struct kbase_kcpu_dma_fence_meta *metadata = READ_ONCE(kcpu_fence->metadata);
 
-	/* Readers may race with fence release while still protected by the
-	 * dma_fence RCU lifetime. Hence the following extends the requirement of
-	 * the metadata to be freeed via kfree_rcu().
-	 */
-	return metadata->timeline_name;
+	return kcpu_fence->metadata->timeline_name;
 }
 
 static bool kbase_fence_enable_signaling(struct dma_fence *fence)
@@ -86,31 +64,16 @@ static void kbase_fence_release(struct dma_fence *fence)
 		container_of(fence, struct kbase_kcpu_dma_fence, base);
 	struct kbase_kcpu_dma_fence_meta *metadata = kcpu_fence->metadata;
 	struct module *module = kcpu_fence->module;
-	struct kbase_fence_meta_put_defer *meta_defer;
 
 	BUILD_BUG_ON(offsetof(struct kbase_kcpu_dma_fence, base) != 0);
-
-	meta_defer = kzalloc(sizeof(*meta_defer), GFP_ATOMIC);
-	if (meta_defer) {
-		meta_defer->metadata = metadata;
-		meta_defer->module = module;
-	}
 
 	/* Below is a MUST in freeing a kbase_kcpu_dma_fence, i.e. must use
 	 * upstream exported dma_fence_free() method. This ensures the alignment
 	 * of free-handling in kbase to the kernel upstream framework.
 	 */
 	dma_fence_free(fence);
-
-	if (meta_defer) {
-		/* Ensure the metadata only freed after the fence RCU readers have
-		 * gone through a rcu-grace window.
-		 */
-		call_rcu(&meta_defer->rcu, kbase_fence_meta_put_deferred);
-	} else {
-		kbase_kcpu_dma_fence_meta_put(metadata);
-		module_put(module);
-	}
+	kbase_kcpu_dma_fence_meta_put(metadata);
+	module_put(module);
 }
 
 extern const struct dma_fence_ops kbase_fence_ops; /* silence checker warning */

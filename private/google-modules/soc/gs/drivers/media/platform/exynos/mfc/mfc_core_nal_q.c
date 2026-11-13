@@ -1863,12 +1863,21 @@ static void __mfc_core_nal_q_handle_frame_copy_timestamp(struct mfc_ctx *ctx,
 static void __mfc_core_nal_q_get_img_size(struct mfc_core *core, struct mfc_ctx *ctx,
 			DecoderOutputStr *pOutStr, enum mfc_get_img_size img_size)
 {
+	struct mfc_core_ctx *core_ctx = core->core_ctx[ctx->num];
 	struct mfc_dec *dec = ctx->dec_priv;
 	unsigned int w, h;
 	int i;
 
 	w = ctx->img_width;
 	h = ctx->img_height;
+
+	if (mfc_check_dec_resolution(ctx,
+			pOutStr->DisplayFrameWidth, pOutStr->DisplayFrameHeight)) {
+		mfc_ctx_err("[NALQ][DRC] unsupported resolution from F/W, %dx%d\n",
+				pOutStr->DisplayFrameWidth, pOutStr->DisplayFrameHeight);
+		mfc_change_state(core_ctx, MFCINST_ERROR);
+		return;
+	}
 
 	ctx->img_width = pOutStr->DisplayFrameWidth;
 	ctx->img_height = pOutStr->DisplayFrameHeight;

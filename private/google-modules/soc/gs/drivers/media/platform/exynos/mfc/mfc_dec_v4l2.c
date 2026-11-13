@@ -562,6 +562,12 @@ static int mfc_dec_g_fmt_vid_cap_mplane(struct file *file, void *priv,
 
 	if (core_ctx->state >= MFCINST_HEAD_PARSED &&
 	    core_ctx->state < MFCINST_ABORT) {
+		if (mfc_check_dec_resolution(ctx, ctx->img_width, ctx->img_height)) {
+			mfc_ctx_err("Unsupported resolution, %dx%d\n",
+					ctx->img_width, ctx->img_height);
+			return -EINVAL;
+		}
+
 		/* This is run on CAPTURE (decode output) */
 		if (IS_MULTI_MODE(ctx)) {
 			mfc_ctx_info("[2CORE] start the subcore\n");
@@ -737,6 +743,11 @@ static int mfc_dec_s_fmt_vid_out_mplane(struct file *file, void *priv,
 
 	ctx->pix_format = pix_fmt_mp->pixelformat;
 	if ((pix_fmt_mp->width > 0) && (pix_fmt_mp->height > 0)) {
+		if (mfc_check_dec_resolution(ctx, pix_fmt_mp->width, pix_fmt_mp->height)) {
+			mfc_ctx_err("Unsupported resolution, %dx%d\n",
+					pix_fmt_mp->width, pix_fmt_mp->height);
+			return -EINVAL;
+		}
 		ctx->img_height = pix_fmt_mp->height;
 		ctx->img_width = pix_fmt_mp->width;
 	}

@@ -896,6 +896,9 @@ static int kbase_do_syncset(struct kbase_context *kctx, struct basep_syncset *ss
 	if (!(reg->flags & KBASE_REG_CPU_CACHED))
 		goto out_unlock;
 
+	if (reg->flags & KBASE_REG_DONT_NEED)
+		goto out_unlock;
+
 	start = (uintptr_t)sset->user_addr;
 	size = (size_t)sset->size;
 

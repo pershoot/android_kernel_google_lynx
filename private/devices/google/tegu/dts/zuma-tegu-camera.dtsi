@@ -577,6 +577,9 @@
 				/* Power sequence */
 				power-seq = <&rear_main_camera_power_seq>;
 
+				/* Thread priority */
+				transaction-thread-priority = <99>;
+
 				i2c-lock-group-id = <0>;
 			};
 
@@ -614,6 +617,9 @@
 				/* Power sequence */
 				power-seq = <&rear_uw_camera_power_seq>;
 
+				/* Thread priority */
+				transaction-thread-priority = <99>;
+
 				i2c-lock-group-id = <2>;
 			};
 
@@ -650,6 +656,9 @@
 
 				/* Power sequence */
 				power-seq = <&front_camera_power_seq>;
+
+				/* Thread priority */
+				transaction-thread-priority = <99>;
 			};
 
 			/* Actuator for REAR CAMERA */
